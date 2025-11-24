@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { createRoot } from 'react-dom/client';
-import { Volume2, VolumeX, Zap, Monitor, Activity, Cpu, Shield, Crosshair, Wifi, Menu, ArrowLeft, Terminal, AlertTriangle, Database, Battery, BatteryCharging, Smartphone, Maximize } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { 
+  Volume2, VolumeX, Zap, Monitor, Activity, Cpu, Shield, Crosshair, Wifi, Menu, 
+  Terminal, Database, Battery, BatteryCharging, Smartphone, Maximize 
+} from 'lucide-react';
 
 // --- AUDIO ENGINE (Procedural Sound Generation) ---
 class AudioEngine {
@@ -219,7 +221,7 @@ const useSystemMonitor = () => {
 const NotificationToast = ({ message, type, show }) => {
   if (!show) return null;
   return (
-    <div className="fixed top-24 left-1/2 transform -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none">
+    <div className="fixed top-24 left-1/2 transform -translate-x-1/2 z-50 animate-fadeIn pointer-events-none">
       <div className="bg-black/90 border border-red-500 px-6 py-3 flex items-center gap-3 shadow-[0_0_20px_rgba(220,38,38,0.5)]">
         {type === 'mute' ? <VolumeX className="text-red-500" /> : <Volume2 className="text-cyan-400" />}
         <span className="font-mono text-white tracking-widest">{message}</span>
@@ -228,16 +230,82 @@ const NotificationToast = ({ message, type, show }) => {
   );
 };
 
-// Updated Particle Background with "Burst" mode support
+// Factory function to create a particle class with closure over canvas/ctx/mouseRef
+const createParticleClass = (canvas, ctx, mouseRef) => {
+  return class Particle {
+    constructor(isBurst = false) {
+      this.x = 0;
+      this.y = 0;
+      this.vx = 0;
+      this.vy = 0;
+      this.size = 0;
+      this.alpha = 0;
+      this.reset(isBurst);
+    }
+
+    reset(isBurst = false) {
+      if (isBurst) {
+        this.x = canvas.width / 2;
+        this.y = canvas.height / 2;
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 15 + 5;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+      } else {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.vx = (Math.random() - 0.5) * 0.5;
+        this.vy = (Math.random() - 0.5) * 0.5;
+      }
+      this.size = Math.random() * 2 + 0.5;
+      this.alpha = Math.random() * 0.5 + 0.1;
+    }
+
+    update() {
+      this.x += this.vx;
+      this.y += this.vy;
+
+      if (mouseRef.current.active) {
+        const dx = this.x - mouseRef.current.x;
+        const dy = this.y - mouseRef.current.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const maxDist = 250;
+        if (dist < maxDist && dist > 0) {
+          const force = (maxDist - dist) / maxDist;
+          this.vx += (dx / dist) * force * 0.4;
+          this.vy += (dy / dist) * force * 0.4;
+        }
+      }
+
+      this.vx *= 0.96;
+      this.vy *= 0.96;
+
+      if (this.x < 0) this.x = canvas.width;
+      if (this.x > canvas.width) this.x = 0;
+      if (this.y < 0) this.y = canvas.height;
+      if (this.y > canvas.height) this.y = 0;
+    }
+
+    draw() {
+      ctx.fillStyle = `rgba(220, 38, 38, ${this.alpha})`;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+};
+
+// Optimized Particle Background with requestAnimationFrame for 60 FPS
 const ParticleBackground = ({ burstMode }) => {
   const canvasRef = useRef(null);
   const mouseRef = useRef({ x: 0, y: 0, active: false });
+  const particlesRef = useRef([]);
+  const animationFrameRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    let animationFrameId;
-    let particles = [];
+    const ctx = canvas.getContext('2d', { alpha: true });
+    let particles = particlesRef.current;
 
     const resize = () => {
       canvas.width = window.innerWidth;
@@ -246,74 +314,20 @@ const ParticleBackground = ({ burstMode }) => {
     window.addEventListener('resize', resize);
     resize();
 
-    class Particle {
-      constructor(isBurst = false) {
-        this.reset(isBurst);
-      }
+    const Particle = createParticleClass(canvas, ctx, mouseRef);
 
-      reset(isBurst = false) {
-        if (isBurst) {
-          // Explode from center
-          this.x = canvas.width / 2;
-          this.y = canvas.height / 2;
-          const angle = Math.random() * Math.PI * 2;
-          const speed = Math.random() * 15 + 5; // Fast!
-          this.vx = Math.cos(angle) * speed;
-          this.vy = Math.sin(angle) * speed;
-        } else {
-          this.x = Math.random() * canvas.width;
-          this.y = Math.random() * canvas.height;
-          this.vx = (Math.random() - 0.5) * 0.5;
-          this.vy = (Math.random() - 0.5) * 0.5;
-        }
-        this.size = Math.random() * 2 + 0.5;
-        this.alpha = Math.random() * 0.5 + 0.1;
-      }
-
-      update() {
-        this.x += this.vx;
-        this.y += this.vy;
-
-        // Interaction
-        if (mouseRef.current.active) {
-          const dx = this.x - mouseRef.current.x;
-          const dy = this.y - mouseRef.current.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const maxDist = 250;
-          if (dist < maxDist) {
-            const force = (maxDist - dist) / maxDist;
-            this.vx += (dx / dist) * force * 0.4;
-            this.vy += (dy / dist) * force * 0.4;
-          }
-        }
-
-        // Friction
-        this.vx *= 0.96;
-        this.vy *= 0.96;
-
-        // Wrap around
-        if (this.x < 0) this.x = canvas.width;
-        if (this.x > canvas.width) this.x = 0;
-        if (this.y < 0) this.y = canvas.height;
-        if (this.y > canvas.height) this.y = 0;
-      }
-
-      draw() {
-        ctx.fillStyle = `rgba(220, 38, 38, ${this.alpha})`;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
+    // Responsive particle count
     const count = window.innerWidth < 768 ? 60 : 150;
-    for (let i = 0; i < count; i++) particles.push(new Particle());
+    if (particles.length === 0) {
+      for (let i = 0; i < count; i++) particles.push(new Particle());
+    }
+    particlesRef.current = particles;
 
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       particles.forEach(p => { p.update(); p.draw(); });
       
-      // Draw Grid
+      // Draw Grid with optimized rendering
       ctx.strokeStyle = 'rgba(255, 0, 0, 0.03)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -321,7 +335,7 @@ const ParticleBackground = ({ burstMode }) => {
       for(let y = 0; y < canvas.height; y += 40) { ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); }
       ctx.stroke();
 
-      animationFrameId = requestAnimationFrame(animate);
+      animationFrameRef.current = requestAnimationFrame(animate);
     };
 
     animate();
@@ -331,9 +345,8 @@ const ParticleBackground = ({ burstMode }) => {
       for (let i = 0; i < 50; i++) {
         particles.push(new Particle(true));
       }
-      // Remove burst particles eventually to prevent lag
       setTimeout(() => {
-        particles = particles.slice(0, count);
+        particles.splice(count);
       }, 2000);
     }
 
@@ -344,10 +357,10 @@ const ParticleBackground = ({ burstMode }) => {
     };
     const endHandler = () => mouseRef.current.active = false;
 
-    window.addEventListener('mousemove', moveHandler);
-    window.addEventListener('touchmove', moveHandler);
-    window.addEventListener('mouseup', endHandler);
-    window.addEventListener('touchend', endHandler);
+    window.addEventListener('mousemove', moveHandler, { passive: true });
+    window.addEventListener('touchmove', moveHandler, { passive: true });
+    window.addEventListener('mouseup', endHandler, { passive: true });
+    window.addEventListener('touchend', endHandler, { passive: true });
 
     return () => {
       window.removeEventListener('resize', resize);
@@ -355,7 +368,7 @@ const ParticleBackground = ({ burstMode }) => {
       window.removeEventListener('touchmove', moveHandler);
       window.removeEventListener('mouseup', endHandler);
       window.removeEventListener('touchend', endHandler);
-      cancelAnimationFrame(animationFrameId);
+      cancelAnimationFrame(animationFrameRef.current);
     };
   }, [burstMode]);
 
@@ -435,29 +448,25 @@ const CyberCheckbox = ({ label, checked, onChange }) => (
   </div>
 );
 
-// FIX: CyberSlider with robust event handling
+// CyberSlider with robust event handling
 const CyberSlider = ({ label, value, onChange }) => (
   <div className="mb-6 select-none">
     <div className="flex justify-between items-center mb-2">
       <span className="bg-red-500/10 px-2 py-0.5 text-xs text-red-400 border-l-2 border-red-500 font-bold tracking-wider uppercase">
         {label}
       </span>
-      <span className="font-mono text-cyan-400 shadow-cyan-400/50 text-shadow-sm">{value}%</span>
+      <span className="font-mono text-cyan-400 shadow-cyan-400/50">{value}%</span>
     </div>
-    <div className="relative h-8 w-full flex items-center cursor-pointer group" 
+    <div className="relative h-8 w-full flex items-center cursor-pointer group touch-none" 
       onMouseDown={(e) => {
-        // BUG FIX: Capture rect immediately, synchronously
         const rect = e.currentTarget.getBoundingClientRect();
         
         const update = (ev) => {
-          // Robust clientX fetch for mouse/touch
           const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
-          // Use captured rect
           const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
           onChange(Math.round(pct));
         };
         
-        // Initial update on click
         update(e);
         
         const move = (ev) => { update(ev); };
@@ -474,7 +483,6 @@ const CyberSlider = ({ label, value, onChange }) => (
         window.addEventListener('touchmove', move);
         window.addEventListener('touchend', up);
       }}
-      // Add touch start for mobile support on the slider
       onTouchStart={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
         const update = (ev) => {
@@ -505,14 +513,14 @@ const CyberSlider = ({ label, value, onChange }) => (
   </div>
 );
 
-const AttributeNode = ({ label, value, icon: Icon, active, onClick }) => (
+const AttributeNode = ({ label, value, icon: IconComponent, active, onClick }) => (
   <button 
     onClick={() => {
       audio.playClickSound();
       onClick();
     }}
     onMouseEnter={() => audio.playHoverSound()}
-    className={`group relative flex items-center justify-center w-24 h-24 sm:w-28 sm:h-28 m-2 transition-all duration-300 transform outline-none`}
+    className={`group relative flex items-center justify-center w-20 h-20 xs:w-24 xs:h-24 sm:w-28 sm:h-28 m-1 sm:m-2 transition-all duration-300 transform outline-none`}
   >
     <div className={`absolute inset-0 transform rotate-45 border-2 transition-all duration-300 ${
       active 
@@ -520,9 +528,9 @@ const AttributeNode = ({ label, value, icon: Icon, active, onClick }) => (
         : 'bg-black/80 border-red-900/50 hover:border-red-500/80 hover:scale-105'
     }`}></div>
     <div className="relative z-10 flex flex-col items-center justify-center text-red-500">
-      <Icon size={24} className={`mb-1 transition-all ${active ? 'text-white drop-shadow-[0_0_5px_white]' : 'text-red-600'}`} />
-      <span className="text-[10px] font-bold tracking-wider uppercase text-red-400">{label}</span>
-      <span className="text-lg font-mono font-bold text-white">{value}</span>
+      <IconComponent size={20} className={`mb-1 transition-all ${active ? 'text-white drop-shadow-[0_0_5px_white]' : 'text-red-600'}`} />
+      <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase text-red-400">{label}</span>
+      <span className="text-base sm:text-lg font-mono font-bold text-white">{value}</span>
     </div>
   </button>
 );
@@ -586,9 +594,9 @@ const App = () => {
         }}
       >
         <ParticleBackground burstMode={false} />
-        <div className="z-10 border border-red-500/50 p-12 bg-black/90 backdrop-blur-md text-center group hover:border-red-500 transition-colors shadow-[0_0_50px_rgba(220,38,38,0.2)]">
-          <h1 className="text-5xl font-black text-red-600 tracking-tighter mb-4 group-hover:text-red-500 transition-colors" style={{ fontFamily: 'Orbitron, sans-serif' }}>SYSTEM OFFLINE</h1>
-          <p className="text-cyan-400 font-mono text-sm tracking-[0.4em] animate-pulse">TAP TO INITIALIZE NEURAL LINK</p>
+        <div className="z-10 border border-red-500/50 p-8 sm:p-12 bg-black/90 backdrop-blur-md text-center group hover:border-red-500 transition-colors shadow-[0_0_50px_rgba(220,38,38,0.2)] mx-4">
+          <h1 className="text-3xl sm:text-5xl font-black text-red-600 tracking-tighter mb-4 group-hover:text-red-500 transition-colors cyberpunk-heading">SYSTEM OFFLINE</h1>
+          <p className="text-cyan-400 font-mono text-xs sm:text-sm tracking-[0.3em] sm:tracking-[0.4em] animate-pulse">TAP TO INITIALIZE NEURAL LINK</p>
         </div>
       </div>
     );
@@ -611,7 +619,7 @@ const App = () => {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap');
         body { font-family: 'Share Tech Mono', monospace; }
-        h1, h2, h3, .heading { font-family: 'Orbitron', sans-serif; }
+        h1, h2, h3, .heading, .cyberpunk-heading { font-family: 'Orbitron', sans-serif; }
         
         .chromatic-text {
           text-shadow: ${settings.chromatic ? '2px 0 rgba(255,0,0,0.7), -2px 0 rgba(0,255,255,0.7)' : 'none'};
@@ -633,10 +641,41 @@ const App = () => {
           mask-image: radial-gradient(circle, transparent 50%, black 100%);
           -webkit-mask-image: radial-gradient(circle, transparent 50%, black 100%);
         }
+        
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .animate-fadeIn {
+          animation: fadeIn 0.3s ease-out;
+        }
 
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { bg: #000; }
-        ::-webkit-scrollbar-thumb { bg: #991b1b; }
+        /* Responsive aspect ratio optimization for 16:9 and 20:9 */
+        @media (min-aspect-ratio: 16/9) {
+          .main-content {
+            max-width: 90vw;
+            margin: 0 auto;
+          }
+        }
+        
+        @media (min-aspect-ratio: 20/9) {
+          .main-content {
+            max-width: 85vw;
+            margin: 0 auto;
+          }
+        }
+        
+        /* Mobile landscape optimization */
+        @media (max-height: 500px) and (orientation: landscape) {
+          .nav-bar {
+            height: 60px !important;
+          }
+          .main-content {
+            padding-top: 70px !important;
+            padding-bottom: 70px !important;
+          }
+        }
       `}</style>
       
       <ParticleBackground burstMode={burst} />
@@ -647,20 +686,20 @@ const App = () => {
       <NotificationToast {...notification} />
 
       {/* Header with REAL Stats */}
-      <header className="fixed top-0 w-full z-30 p-4 px-6 flex justify-between items-start bg-gradient-to-b from-black via-black/90 to-transparent">
+      <header className="fixed top-0 w-full z-30 p-2 sm:p-4 px-3 sm:px-6 flex justify-between items-start bg-gradient-to-b from-black via-black/90 to-transparent">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 ${systemStats.online ? 'bg-green-500' : 'bg-red-500'} animate-ping`} />
-            <span className={`text-xs tracking-[0.2em] text-red-400/80 ${glowClass}`}>NET: {systemStats.connection}</span>
+            <span className={`text-[10px] sm:text-xs tracking-[0.2em] text-red-400/80 ${glowClass}`}>NET: {systemStats.connection}</span>
           </div>
-          <span className="text-[10px] text-red-800 font-mono">{systemStats.platform} // {systemStats.userAgent.substring(0, 15)}...</span>
+          <span className="text-[8px] sm:text-[10px] text-red-800 font-mono hidden sm:block">{systemStats.platform} // {systemStats.userAgent.substring(0, 15)}...</span>
         </div>
         <div className="text-right">
-          <div className={`font-mono text-cyan-400 text-sm tracking-wider flex items-center justify-end gap-4 ${glowClass}`}>
-             <span className="flex items-center gap-1"><Cpu size={14}/> {systemStats.cpuUsage}%</span>
-             <span className="flex items-center gap-1"><Terminal size={14}/> {systemStats.memory}</span>
+          <div className={`font-mono text-cyan-400 text-xs sm:text-sm tracking-wider flex items-center justify-end gap-2 sm:gap-4 ${glowClass}`}>
+             <span className="flex items-center gap-1"><Cpu size={12}/> {systemStats.cpuUsage}%</span>
+             <span className="flex items-center gap-1"><Terminal size={12}/> {systemStats.memory}</span>
           </div>
-          <div className="text-[10px] text-red-600 mt-1">
+          <div className="text-[8px] sm:text-[10px] text-red-600 mt-1">
             {systemStats.batteryLevel !== null ? (
               <span className="flex items-center justify-end gap-1">
                 PWR: {systemStats.batteryLevel}% {systemStats.batteryCharging ? '(CHRG)' : ''}
@@ -671,14 +710,14 @@ const App = () => {
       </header>
 
       {/* Main Content */}
-      <main className="relative z-20 pt-24 pb-32 px-4 h-screen overflow-y-auto overflow-x-hidden">
+      <main className="main-content relative z-20 pt-16 sm:pt-24 pb-24 sm:pb-32 px-2 sm:px-4 min-h-screen overflow-y-auto overflow-x-hidden">
         
         {view === 'home' && (
-          <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 max-w-6xl mx-auto">
-             <div className="mb-10 pl-6 border-l-4 border-red-600 flex justify-between items-end">
+          <div className="animate-fadeIn max-w-6xl mx-auto">
+             <div className="mb-6 sm:mb-10 pl-3 sm:pl-6 border-l-4 border-red-600 flex justify-between items-end">
                <div>
-                 <h2 className={`text-4xl font-black text-white tracking-widest uppercase mb-1 ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>Attributes</h2>
-                 <p className="text-red-400/60 text-sm tracking-wider">NEURAL LINK STATUS: STABLE</p>
+                 <h2 className={`text-2xl sm:text-4xl font-black text-white tracking-widest uppercase mb-1 ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>Attributes</h2>
+                 <p className="text-red-400/60 text-xs sm:text-sm tracking-wider">NEURAL LINK STATUS: STABLE</p>
                </div>
                <div className="hidden sm:block text-right">
                  <div className="text-4xl font-mono text-red-600 font-bold">LVL 50</div>
@@ -686,49 +725,49 @@ const App = () => {
                </div>
              </div>
 
-             <div className="flex flex-col lg:flex-row gap-12 items-center justify-center">
-               <div className="relative p-10">
+             <div className="flex flex-col lg:flex-row gap-6 lg:gap-12 items-center justify-center">
+               <div className="relative p-4 sm:p-10">
                  <div className="absolute inset-0 bg-red-900/5 rotate-45 transform scale-75 blur-3xl rounded-full"></div>
-                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-6 transform sm:-rotate-45 sm:scale-90 origin-center relative z-10">
+                 <div className="grid grid-cols-3 sm:grid-cols-3 gap-1 sm:gap-6 transform sm:-rotate-45 sm:scale-90 origin-center relative z-10">
                     <div className="transform sm:rotate-45"><AttributeNode icon={Zap} label="Reflex" value="20" active={activeAttr === 'reflex'} onClick={() => setActiveAttr('reflex')} /></div>
                     <div className="transform sm:rotate-45"><AttributeNode icon={Cpu} label="Intel" value="18" active={activeAttr === 'intel'} onClick={() => setActiveAttr('intel')} /></div>
                     <div className="transform sm:rotate-45"><AttributeNode icon={Shield} label="Body" value="15" active={activeAttr === 'body'} onClick={() => setActiveAttr('body')} /></div>
-                    <div className="transform sm:rotate-45"><AttributeNode icon={Wifi} label="Tech" value="20" active={activeAttr === 'tech'} onClick={() => setActiveAttr('tech')} /></div>
+                    <div className="transform sm:rotate-45 col-start-1 sm:col-start-auto"><AttributeNode icon={Wifi} label="Tech" value="20" active={activeAttr === 'tech'} onClick={() => setActiveAttr('tech')} /></div>
                     <div className="transform sm:rotate-45"><AttributeNode icon={Crosshair} label="Cool" value="12" active={activeAttr === 'cool'} onClick={() => setActiveAttr('cool')} /></div>
                  </div>
                </div>
 
-               <div className={`w-full max-w-md border border-red-900/30 p-8 relative group hover:border-red-500/50 transition-all duration-300 ${frostClass}`}>
+               <div className={`w-full max-w-md border border-red-900/30 p-4 sm:p-8 relative group hover:border-red-500/50 transition-all duration-300 ${frostClass}`}>
                  <div className="absolute top-0 right-0 w-16 h-16 border-t border-r border-red-500/30"></div>
                  <div className="absolute bottom-0 left-0 w-16 h-16 border-b border-l border-red-500/30"></div>
                  
-                 <div className="absolute top-0 right-0 p-3 text-[10px] text-red-600 font-bold border-b border-l border-red-900/30 bg-red-950/20">
+                 <div className="absolute top-0 right-0 p-2 sm:p-3 text-[8px] sm:text-[10px] text-red-600 font-bold border-b border-l border-red-900/30 bg-red-950/20">
                    ID: {activeAttr.toUpperCase()}_KERNEL
                  </div>
 
-                 <h3 className={`text-3xl text-cyan-400 mb-6 heading uppercase border-b-2 border-red-900/50 pb-4 ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>
+                 <h3 className={`text-xl sm:text-3xl text-cyan-400 mb-4 sm:mb-6 heading uppercase border-b-2 border-red-900/50 pb-4 ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>
                    {activeAttr} NODE
                  </h3>
                  
-                 <div className="space-y-6 font-mono text-sm text-red-300/80">
+                 <div className="space-y-4 sm:space-y-6 font-mono text-xs sm:text-sm text-red-300/80">
                    <p className="leading-relaxed">
                      Hardware interface protocol for the {activeAttr} subsystem. Enhances signal propagation speed and neural plasticity.
                    </p>
                    
-                   <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-red-950/10 p-3 border border-red-900/50 hover:bg-red-900/20 transition-colors">
-                        <div className="text-[10px] uppercase text-red-500 mb-1">Current Output</div>
-                        <div className="text-2xl text-white font-bold">98.4%</div>
+                   <div className="grid grid-cols-2 gap-2 sm:gap-4">
+                      <div className="bg-red-950/10 p-2 sm:p-3 border border-red-900/50 hover:bg-red-900/20 transition-colors">
+                        <div className="text-[8px] sm:text-[10px] uppercase text-red-500 mb-1">Current Output</div>
+                        <div className="text-xl sm:text-2xl text-white font-bold">98.4%</div>
                       </div>
-                      <div className="bg-red-950/10 p-3 border border-red-900/50 hover:bg-red-900/20 transition-colors">
-                        <div className="text-[10px] uppercase text-red-500 mb-1">Next Threshold</div>
-                        <div className="text-2xl text-cyan-400 font-bold animate-pulse">2050 XP</div>
+                      <div className="bg-red-950/10 p-2 sm:p-3 border border-red-900/50 hover:bg-red-900/20 transition-colors">
+                        <div className="text-[8px] sm:text-[10px] uppercase text-red-500 mb-1">Next Threshold</div>
+                        <div className="text-xl sm:text-2xl text-cyan-400 font-bold animate-pulse">2050 XP</div>
                       </div>
                    </div>
 
                    <button 
                     onClick={() => audio.playClickSound()}
-                    className="w-full bg-red-600 hover:bg-red-500 text-black font-black text-lg py-4 uppercase tracking-[0.2em] hover:shadow-[0_0_30px_rgba(220,38,38,0.8)] transition-all active:scale-95"
+                    className="w-full bg-red-600 hover:bg-red-500 text-black font-black text-base sm:text-lg py-3 sm:py-4 uppercase tracking-[0.2em] hover:shadow-[0_0_30px_rgba(220,38,38,0.8)] transition-all active:scale-95"
                     style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}
                    >
                      Inject Code
@@ -740,54 +779,54 @@ const App = () => {
         )}
 
         {view === 'device' && (
-          <div className="animate-in fade-in zoom-in-95 duration-500 max-w-4xl mx-auto pt-4">
-             <div className={`border-2 border-red-600/50 p-6 relative ${frostClass}`}>
-               <div className="absolute top-0 left-0 bg-red-600 text-black font-bold px-4 py-1 text-sm tracking-widest">DEVICE_INTEL</div>
+          <div className="animate-fadeIn max-w-4xl mx-auto pt-4">
+             <div className={`border-2 border-red-600/50 p-4 sm:p-6 relative ${frostClass}`}>
+               <div className="absolute top-0 left-0 bg-red-600 text-black font-bold px-3 sm:px-4 py-1 text-xs sm:text-sm tracking-widest">DEVICE_INTEL</div>
                
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 mt-8">
                   {/* Left Column: Visual Representation */}
-                  <div className="flex flex-col items-center justify-center p-8 bg-black/40 border border-red-900/30">
-                     <Smartphone size={120} className="text-red-600 animate-pulse drop-shadow-[0_0_15px_rgba(220,38,38,0.5)]" />
-                     <div className="mt-6 text-center">
-                       <h3 className="text-2xl text-white font-bold tracking-widest">{systemStats.platform}</h3>
-                       <p className="text-red-400 text-xs mt-1">{systemStats.userAgent}</p>
+                  <div className="flex flex-col items-center justify-center p-4 sm:p-8 bg-black/40 border border-red-900/30">
+                     <Smartphone size={80} className="text-red-600 animate-pulse drop-shadow-[0_0_15px_rgba(220,38,38,0.5)] sm:w-[120px] sm:h-[120px]" />
+                     <div className="mt-4 sm:mt-6 text-center">
+                       <h3 className="text-lg sm:text-2xl text-white font-bold tracking-widest">{systemStats.platform}</h3>
+                       <p className="text-red-400 text-[10px] sm:text-xs mt-1 break-all">{systemStats.userAgent.substring(0, 50)}...</p>
                      </div>
                   </div>
 
                   {/* Right Column: Data Grid */}
-                  <div className="grid grid-cols-1 gap-4">
+                  <div className="grid grid-cols-1 gap-3 sm:gap-4">
                     
-                    <div className="bg-red-950/10 p-4 border-l-4 border-cyan-400">
-                      <div className="flex items-center gap-3 mb-2">
-                         <Database className="text-cyan-400" />
-                         <span className="text-sm font-bold text-cyan-100 uppercase">Storage Subsystem</span>
+                    <div className="bg-red-950/10 p-3 sm:p-4 border-l-4 border-cyan-400">
+                      <div className="flex items-center gap-2 sm:gap-3 mb-2">
+                         <Database className="text-cyan-400" size={16}/>
+                         <span className="text-xs sm:text-sm font-bold text-cyan-100 uppercase">Storage Subsystem</span>
                       </div>
                       <div className="flex justify-between items-end">
-                         <span className="text-xs text-red-400">USED: {systemStats.storageUsage}</span>
-                         <span className="text-xl font-mono text-white">{systemStats.storageQuota} TOTAL</span>
+                         <span className="text-[10px] sm:text-xs text-red-400">USED: {systemStats.storageUsage}</span>
+                         <span className="text-lg sm:text-xl font-mono text-white">{systemStats.storageQuota} TOTAL</span>
                       </div>
                       <div className="w-full h-1 bg-red-900/30 mt-2">
                         <div className="h-full bg-cyan-400" style={{width: '25%'}}></div>
                       </div>
                     </div>
 
-                    <div className="bg-red-950/10 p-4 border-l-4 border-red-500">
-                      <div className="flex items-center gap-3 mb-2">
-                         <Maximize className="text-red-500" />
-                         <span className="text-sm font-bold text-red-100 uppercase">Display Matrix</span>
+                    <div className="bg-red-950/10 p-3 sm:p-4 border-l-4 border-red-500">
+                      <div className="flex items-center gap-2 sm:gap-3 mb-2">
+                         <Maximize className="text-red-500" size={16}/>
+                         <span className="text-xs sm:text-sm font-bold text-red-100 uppercase">Display Matrix</span>
                       </div>
-                      <div className="text-xl font-mono text-white">{systemStats.screenRes}</div>
-                      <div className="text-xs text-red-400 mt-1">{systemStats.gpu}</div>
+                      <div className="text-lg sm:text-xl font-mono text-white">{systemStats.screenRes}</div>
+                      <div className="text-[10px] sm:text-xs text-red-400 mt-1 break-all">{systemStats.gpu.substring(0, 40)}</div>
                     </div>
 
-                    <div className="bg-red-950/10 p-4 border-l-4 border-green-500">
-                      <div className="flex items-center gap-3 mb-2">
-                         {systemStats.batteryCharging ? <BatteryCharging className="text-green-500" /> : <Battery className="text-green-500" />}
-                         <span className="text-sm font-bold text-green-100 uppercase">Power Core</span>
+                    <div className="bg-red-950/10 p-3 sm:p-4 border-l-4 border-green-500">
+                      <div className="flex items-center gap-2 sm:gap-3 mb-2">
+                         {systemStats.batteryCharging ? <BatteryCharging className="text-green-500" size={16}/> : <Battery className="text-green-500" size={16}/>}
+                         <span className="text-xs sm:text-sm font-bold text-green-100 uppercase">Power Core</span>
                       </div>
                       <div className="flex justify-between items-end">
-                         <span className="text-xl font-mono text-white">{systemStats.batteryLevel ? `${systemStats.batteryLevel}%` : 'EXT'}</span>
-                         <span className="text-xs text-green-400">{systemStats.batteryCharging ? 'CHARGING' : 'DISCHARGING'}</span>
+                         <span className="text-lg sm:text-xl font-mono text-white">{systemStats.batteryLevel ? `${systemStats.batteryLevel}%` : 'EXT'}</span>
+                         <span className="text-[10px] sm:text-xs text-green-400">{systemStats.batteryCharging ? 'CHARGING' : 'DISCHARGING'}</span>
                       </div>
                     </div>
 
@@ -796,7 +835,7 @@ const App = () => {
 
                <button 
                   onClick={() => { audio.playClickSound(); setView('home'); }}
-                  className="mt-8 w-full border border-red-600 text-red-500 hover:bg-red-600 hover:text-black py-3 uppercase tracking-widest font-bold transition-all"
+                  className="mt-6 sm:mt-8 w-full border border-red-600 text-red-500 hover:bg-red-600 hover:text-black py-2 sm:py-3 uppercase tracking-widest font-bold transition-all text-sm"
                >
                  Close Diagnostics
                </button>
@@ -805,19 +844,19 @@ const App = () => {
         )}
 
         {view === 'settings' && (
-          <div className="animate-in fade-in zoom-in-95 duration-500 max-w-3xl mx-auto pt-8">
+          <div className="animate-fadeIn max-w-3xl mx-auto pt-4 sm:pt-8">
             <div className={`border border-red-600/30 p-1 relative shadow-[0_0_100px_rgba(220,38,38,0.1)] ${frostClass}`}>
-              <div className="absolute top-1/2 -left-4 w-1 h-32 bg-red-900/50 transform -translate-y-1/2"></div>
-              <div className="absolute top-1/2 -right-4 w-1 h-32 bg-red-900/50 transform -translate-y-1/2"></div>
+              <div className="absolute top-1/2 -left-4 w-1 h-32 bg-red-900/50 transform -translate-y-1/2 hidden sm:block"></div>
+              <div className="absolute top-1/2 -right-4 w-1 h-32 bg-red-900/50 transform -translate-y-1/2 hidden sm:block"></div>
 
-              <div className="border border-red-900/50 p-8 sm:p-12 relative overflow-hidden">
+              <div className="border border-red-900/50 p-4 sm:p-8 lg:p-12 relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-red-500"></div>
                 <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-red-500"></div>
                 <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-red-500"></div>
                 <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-red-500"></div>
 
-                <div className="flex items-center justify-between mb-12 border-b border-red-900/50 pb-4">
-                  <h2 className={`text-3xl tracking-[0.2em] text-red-100 heading ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>SYSTEM_CONFIG</h2>
+                <div className="flex items-center justify-between mb-8 sm:mb-12 border-b border-red-900/50 pb-4">
+                  <h2 className={`text-xl sm:text-3xl tracking-[0.1em] sm:tracking-[0.2em] text-red-100 heading ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>SYSTEM_CONFIG</h2>
                   <div className="flex gap-2">
                     <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
                     <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse delay-75"></div>
@@ -825,11 +864,11 @@ const App = () => {
                   </div>
                 </div>
 
-                <div className="space-y-10">
+                <div className="space-y-6 sm:space-y-10">
                   <div className="space-y-2">
                      <div className="flex items-center gap-2 mb-4">
                        <Volume2 className="text-red-500" size={16} />
-                       <span className="text-sm font-bold text-red-500 uppercase tracking-widest">Audio Output</span>
+                       <span className="text-xs sm:text-sm font-bold text-red-500 uppercase tracking-widest">Audio Output</span>
                      </div>
                      <CyberSlider 
                         label="Music Volume" 
@@ -848,7 +887,7 @@ const App = () => {
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-4">
                        <Monitor className="text-red-500" size={16} />
-                       <span className="text-sm font-bold text-red-500 uppercase tracking-widest">Graphics Engine</span>
+                       <span className="text-xs sm:text-sm font-bold text-red-500 uppercase tracking-widest">Graphics Engine</span>
                      </div>
                     <CyberCheckbox label="MOTION BLUR" checked={settings.motionBlur} onChange={(v) => setSettings(s => ({...s, motionBlur: v}))} />
                     <CyberCheckbox label="DEPTH OF FIELD" checked={settings.dof} onChange={(v) => setSettings(s => ({...s, dof: v}))} />
@@ -857,15 +896,15 @@ const App = () => {
                   </div>
                 </div>
                 
-                <div className="mt-8 text-center">
-                  <p className="text-[10px] text-red-800 font-mono mb-4">PRESS 'M' TO TOGGLE AUDIO MUTE</p>
+                <div className="mt-6 sm:mt-8 text-center">
+                  <p className="text-[9px] sm:text-[10px] text-red-800 font-mono mb-4">PRESS 'M' TO TOGGLE AUDIO MUTE</p>
                 </div>
 
-                <div className="mt-6 flex justify-between gap-6">
-                  <button onClick={() => { audio.playClickSound(); setView('home'); }} className="flex-1 border border-red-600 text-red-500 py-3 hover:bg-red-600 hover:text-black transition-colors uppercase tracking-widest text-sm font-bold">
+                <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row justify-between gap-3 sm:gap-6">
+                  <button onClick={() => { audio.playClickSound(); setView('home'); }} className="flex-1 border border-red-600 text-red-500 py-2 sm:py-3 hover:bg-red-600 hover:text-black transition-colors uppercase tracking-widest text-xs sm:text-sm font-bold">
                     Discard
                   </button>
-                  <button onClick={() => { audio.playClickSound(); setView('home'); }} className="flex-1 bg-red-600 text-black font-bold py-3 hover:bg-white hover:text-black transition-colors uppercase tracking-widest text-sm shadow-[0_0_20px_rgba(220,38,38,0.5)]">
+                  <button onClick={() => { audio.playClickSound(); setView('home'); }} className="flex-1 bg-red-600 text-black font-bold py-2 sm:py-3 hover:bg-white hover:text-black transition-colors uppercase tracking-widest text-xs sm:text-sm shadow-[0_0_20px_rgba(220,38,38,0.5)]">
                     Save Changes
                   </button>
                 </div>
@@ -876,39 +915,39 @@ const App = () => {
       </main>
 
       {/* Navigation Bar */}
-      <nav className="fixed bottom-0 w-full z-40 bg-black/90 border-t border-red-900/50 backdrop-blur-lg pb-safe">
-         <div className="flex justify-around items-center h-20 max-w-lg mx-auto relative">
+      <nav className="nav-bar fixed bottom-0 w-full z-40 bg-black/90 border-t border-red-900/50 backdrop-blur-lg pb-safe">
+         <div className="flex justify-around items-center h-16 sm:h-20 max-w-lg mx-auto relative">
             <button 
               onClick={() => { audio.playClickSound(); setView('home'); }} 
-              className={`flex flex-col items-center gap-1 w-20 ${view === 'home' ? 'text-red-500 drop-shadow-[0_0_8px_red]' : 'text-red-900 hover:text-red-400'}`}
+              className={`flex flex-col items-center gap-1 w-16 sm:w-20 ${view === 'home' ? 'text-red-500 drop-shadow-[0_0_8px_red]' : 'text-red-900 hover:text-red-400'}`}
             >
-              <Activity size={24} />
-              <span className={`text-[10px] uppercase tracking-widest font-bold ${glowClass}`}>Stats</span>
+              <Activity size={20} />
+              <span className={`text-[8px] sm:text-[10px] uppercase tracking-widest font-bold ${glowClass}`}>Stats</span>
               {view === 'home' && <div className="w-1 h-1 bg-red-500 rounded-full mt-1"></div>}
             </button>
             
             {/* Center Decorative Button - Triggers Device View */}
-            <div className="relative -top-8 group">
+            <div className="relative -top-6 sm:-top-8 group">
               <button 
                 onClick={() => {
                   audio.playClickSound();
                   triggerBurst();
                   setView('device');
                 }}
-                className="w-20 h-20 bg-black rotate-45 border-2 border-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.3)] group-hover:scale-110 group-hover:border-red-400 group-hover:shadow-[0_0_50px_rgba(220,38,38,0.6)] transition-all duration-300"
+                className="w-16 h-16 sm:w-20 sm:h-20 bg-black rotate-45 border-2 border-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.3)] group-hover:scale-110 group-hover:border-red-400 group-hover:shadow-[0_0_50px_rgba(220,38,38,0.6)] transition-all duration-300"
               >
-                <div className="-rotate-45 bg-red-600 p-3 shadow-inner">
-                  <Crosshair className="text-black" size={32} />
+                <div className="-rotate-45 bg-red-600 p-2 sm:p-3 shadow-inner">
+                  <Crosshair className="text-black" size={24} />
                 </div>
               </button>
             </div>
 
             <button 
               onClick={() => { audio.playClickSound(); setView('settings'); }} 
-              className={`flex flex-col items-center gap-1 w-20 ${view === 'settings' ? 'text-red-500 drop-shadow-[0_0_8px_red]' : 'text-red-900 hover:text-red-400'}`}
+              className={`flex flex-col items-center gap-1 w-16 sm:w-20 ${view === 'settings' ? 'text-red-500 drop-shadow-[0_0_8px_red]' : 'text-red-900 hover:text-red-400'}`}
             >
-              <Menu size={24} />
-              <span className={`text-[10px] uppercase tracking-widest font-bold ${glowClass}`}>Config</span>
+              <Menu size={20} />
+              <span className={`text-[8px] sm:text-[10px] uppercase tracking-widest font-bold ${glowClass}`}>Config</span>
               {view === 'settings' && <div className="w-1 h-1 bg-red-500 rounded-full mt-1"></div>}
             </button>
          </div>
