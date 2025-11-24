@@ -4,7 +4,26 @@ import {
   Terminal, Database, Battery, BatteryCharging, Smartphone, Maximize 
 } from 'lucide-react';
 
-// --- AUDIO ENGINE (Procedural Sound Generation) ---
+// --- CONSTANTS ---
+const AUDIO_CONFIG = {
+  DRONE_FREQUENCY: 50,
+  FILTER_FREQUENCY: 120,
+  FILTER_Q: 5,
+  LFO_FREQUENCY: 0.2,
+  LFO_GAIN: 20,
+  DRONE_GAIN: 0.05,
+  CLICK_START_FREQ: 1200,
+  CLICK_END_FREQ: 100,
+  HOVER_BASE_FREQ: 800,
+  HOVER_VARIANCE: 200
+};
+
+const RESPONSIVE_BREAKPOINT = 768;
+
+/**
+ * AudioEngine - Procedural sound generation for UI interactions
+ * Uses Web Audio API to create synthesized cyberpunk-style sounds
+ */
 class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -17,6 +36,7 @@ class AudioEngine {
     this.initialized = false;
   }
 
+  /** Initialize the audio context and connect audio nodes */
   init() {
     if (this.initialized) return;
     
@@ -39,28 +59,29 @@ class AudioEngine {
     this.startAmbience();
   }
 
+  /** Start the ambient drone sound with LFO modulation */
   startAmbience() {
     if (!this.ctx) return;
     this.droneOsc = this.ctx.createOscillator();
     this.droneOsc.type = 'sawtooth';
-    this.droneOsc.frequency.value = 50; 
+    this.droneOsc.frequency.value = AUDIO_CONFIG.DRONE_FREQUENCY; 
     
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 120;
-    filter.Q.value = 5;
+    filter.frequency.value = AUDIO_CONFIG.FILTER_FREQUENCY;
+    filter.Q.value = AUDIO_CONFIG.FILTER_Q;
 
     const lfo = this.ctx.createOscillator();
     lfo.type = 'sine';
-    lfo.frequency.value = 0.2; 
+    lfo.frequency.value = AUDIO_CONFIG.LFO_FREQUENCY; 
     const lfoGain = this.ctx.createGain();
-    lfoGain.gain.value = 20;
+    lfoGain.gain.value = AUDIO_CONFIG.LFO_GAIN;
 
     lfo.connect(lfoGain);
     lfoGain.connect(filter.frequency);
 
     this.droneGain = this.ctx.createGain();
-    this.droneGain.gain.value = 0.05; 
+    this.droneGain.gain.value = AUDIO_CONFIG.DRONE_GAIN; 
 
     this.droneOsc.connect(filter);
     filter.connect(this.droneGain);
@@ -70,6 +91,7 @@ class AudioEngine {
     lfo.start();
   }
 
+  /** Set music and SFX volume levels (0-100) */
   setVolumes(musicVol, sfxVol) {
     if (!this.initialized) return;
     const now = this.ctx.currentTime;
@@ -77,6 +99,7 @@ class AudioEngine {
     this.sfxGain.gain.setTargetAtTime(sfxVol / 100, now, 0.1);
   }
 
+  /** Toggle mute state and return new mute status */
   toggleMute() {
     if (!this.initialized) return false;
     this.isMuted = !this.isMuted;
@@ -85,14 +108,15 @@ class AudioEngine {
     return this.isMuted;
   }
 
+  /** Play a metallic click sound for button presses */
   playClickSound() {
     if (!this.initialized || this.isMuted) return;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(1200, t);
-    osc.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+    osc.frequency.setValueAtTime(AUDIO_CONFIG.CLICK_START_FREQ, t);
+    osc.frequency.exponentialRampToValueAtTime(AUDIO_CONFIG.CLICK_END_FREQ, t + 0.1);
     gain.gain.setValueAtTime(0.5, t);
     gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
     osc.connect(gain);
@@ -101,6 +125,7 @@ class AudioEngine {
     osc.stop(t + 0.15);
   }
 
+  /** Play a soft hover sound for UI feedback */
   playHoverSound() {
     if (!this.initialized || this.isMuted) return;
     const t = this.ctx.currentTime;
