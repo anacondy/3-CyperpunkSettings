@@ -1,78 +1,409 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Settings, Shield, Activity, Cpu } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { 
+  Volume2, VolumeX, Zap, Monitor, Activity, Cpu, Shield, Crosshair, Wifi, Menu, 
+  Terminal, Database, Battery, BatteryCharging, Smartphone, Maximize 
+} from 'lucide-react';
 
-/**
- * MATH-BASED AUDIO ENGINE
- * Generates procedural sounds using Web Audio API to simulate
- * "mathematical code" noises (glitches, chirps, sine sweeps).
- */
-const useSoundEngine = (volume = 0.5) => {
-  const audioContextRef = useRef(null);
-
-  const initAudio = useCallback(() => {
-    if (!audioContextRef.current) {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (AudioContext) {
-        audioContextRef.current = new AudioContext();
-      }
-    }
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
-    }
-  }, []);
-
-  const playSound = useCallback((type = 'click') => {
-    if (!audioContextRef.current) return;
-    
-    const ctx = audioContextRef.current;
-    const osc = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    
-    osc.connect(gainNode);
-    gainNode.connect(ctx.destination);
-
-    const now = ctx.currentTime;
-    
-    if (type === 'click') {
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(800, now);
-      osc.frequency.exponentialRampToValueAtTime(1200, now + 0.05);
-      gainNode.gain.setValueAtTime(volume * 0.5, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
-      osc.start(now);
-      osc.stop(now + 0.05);
-    } else if (type === 'hover') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(200, now);
-      osc.frequency.linearRampToValueAtTime(220, now + 0.05);
-      gainNode.gain.setValueAtTime(volume * 0.1, now);
-      gainNode.gain.linearRampToValueAtTime(0, now + 0.1);
-      osc.start(now);
-      osc.stop(now + 0.1);
-    } else if (type === 'scan') {
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(100, now);
-      osc.frequency.linearRampToValueAtTime(800, now + 0.2);
-      gainNode.gain.setValueAtTime(volume * 0.2, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-      osc.start(now);
-      osc.stop(now + 0.2);
-    }
-  }, [volume]);
-
-  return { initAudio, playSound };
+// --- CONSTANTS ---
+const AUDIO_CONFIG = {
+  DRONE_FREQUENCY: 50,
+  FILTER_FREQUENCY: 120,
+  FILTER_Q: 5,
+  LFO_FREQUENCY: 0.2,
+  LFO_GAIN: 20,
+  DRONE_GAIN: 0.05,
+  CLICK_START_FREQ: 1200,
+  CLICK_END_FREQ: 100,
+  HOVER_BASE_FREQ: 800,
+  HOVER_VARIANCE: 200
 };
 
+const RESPONSIVE_BREAKPOINT = 768;
+
 /**
- * COMPONENT: LOADING SCREEN
- * Replicates the "Loading... 43%" reference with cyan/red aesthetic
+ * AudioEngine - Procedural sound generation for UI interactions
+ * Uses Web Audio API to create synthesized cyberpunk-style sounds
  */
-const LoadingScreen = ({ onComplete }) => {
-  const [progress, setProgress] = useState(0);
-  const { playSound, initAudio } = useSoundEngine(0.5);
+class AudioEngine {
+  constructor() {
+    this.ctx = null;
+    this.masterGain = null;
+    this.musicGain = null;
+    this.sfxGain = null;
+    this.droneOsc = null;
+    this.droneGain = null;
+    this.isMuted = false;
+    this.initialized = false;
+  }
+
+  /** Initialize the audio context and connect audio nodes */
+  init() {
+    if (this.initialized) return;
+    
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    this.ctx = new AudioContext();
+    
+    // Master Gain (Global Volume/Mute)
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.connect(this.ctx.destination);
+    
+    // Music Bus
+    this.musicGain = this.ctx.createGain();
+    this.musicGain.connect(this.masterGain);
+    
+    // SFX Bus
+    this.sfxGain = this.ctx.createGain();
+    this.sfxGain.connect(this.masterGain);
+
+    this.initialized = true;
+    this.startAmbience();
+  }
+
+  /** Start the ambient drone sound with LFO modulation */
+  startAmbience() {
+    if (!this.ctx) return;
+    this.droneOsc = this.ctx.createOscillator();
+    this.droneOsc.type = 'sawtooth';
+    this.droneOsc.frequency.value = AUDIO_CONFIG.DRONE_FREQUENCY; 
+    
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = AUDIO_CONFIG.FILTER_FREQUENCY;
+    filter.Q.value = AUDIO_CONFIG.FILTER_Q;
+
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = AUDIO_CONFIG.LFO_FREQUENCY; 
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = AUDIO_CONFIG.LFO_GAIN;
+
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+
+    this.droneGain = this.ctx.createGain();
+    this.droneGain.gain.value = AUDIO_CONFIG.DRONE_GAIN; 
+
+    this.droneOsc.connect(filter);
+    filter.connect(this.droneGain);
+    this.droneGain.connect(this.musicGain);
+
+    this.droneOsc.start();
+    lfo.start();
+  }
+
+  /** Set music and SFX volume levels (0-100) */
+  setVolumes(musicVol, sfxVol) {
+    if (!this.initialized) return;
+    const now = this.ctx.currentTime;
+    this.musicGain.gain.setTargetAtTime(musicVol / 100, now, 0.1);
+    this.sfxGain.gain.setTargetAtTime(sfxVol / 100, now, 0.1);
+  }
+
+  /** Toggle mute state and return new mute status */
+  toggleMute() {
+    if (!this.initialized) return false;
+    this.isMuted = !this.isMuted;
+    const now = this.ctx.currentTime;
+    this.masterGain.gain.setTargetAtTime(this.isMuted ? 0 : 1, now, 0.1);
+    return this.isMuted;
+  }
+
+  /** Play a metallic click sound for button presses */
+  playClickSound() {
+    if (!this.initialized || this.isMuted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(AUDIO_CONFIG.CLICK_START_FREQ, t);
+    osc.frequency.exponentialRampToValueAtTime(AUDIO_CONFIG.CLICK_END_FREQ, t + 0.1);
+    gain.gain.setValueAtTime(0.5, t);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.15);
+  }
+
+  /** Play a soft hover sound for UI feedback */
+  playHoverSound() {
+    if (!this.initialized || this.isMuted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(800 + Math.random() * 200, t);
+    gain.gain.setValueAtTime(0.05, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(t);
+    osc.stop(t + 0.05);
+  }
+}
+
+const audio = new AudioEngine();
+
+// --- CUSTOM HOOKS ---
+
+const useSystemMonitor = () => {
+  const [stats, setStats] = useState({
+    cpuUsage: 0,
+    memory: '0GB',
+    cores: 0,
+    userAgent: '',
+    platform: '',
+    online: true,
+    connection: 'UNKNOWN',
+    batteryLevel: null,
+    batteryCharging: false,
+    storageQuota: 'CALCULATING...',
+    storageUsage: '...',
+    screenRes: 'UNKNOWN',
+    gpu: 'UNKNOWN GPU'
+  });
 
   useEffect(() => {
-    initAudio();
+    const nav = window.navigator;
+    
+    // 1. Basic Info
+    const connection = nav.connection || nav.mozConnection || nav.webkitConnection;
+    
+    // 2. GPU Detection
+    let gpuInfo = 'GENERIC DISPLAY ADAPTER';
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          gpuInfo = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+        }
+      }
+    } catch (e) { console.warn('GPU Detect Failed', e); }
+
+    // 3. Battery API
+    let batteryUnsub = () => {};
+    if (nav.getBattery) {
+      nav.getBattery().then(battery => {
+        const updateBattery = () => {
+          setStats(prev => ({
+             ...prev,
+             batteryLevel: Math.round(battery.level * 100),
+             batteryCharging: battery.charging
+          }));
+        };
+        updateBattery();
+        battery.addEventListener('levelchange', updateBattery);
+        battery.addEventListener('chargingchange', updateBattery);
+        batteryUnsub = () => {
+          battery.removeEventListener('levelchange', updateBattery);
+          battery.removeEventListener('chargingchange', updateBattery);
+        };
+      });
+    }
+
+    // 4. Storage API
+    const updateStorage = async () => {
+       if (nav.storage && nav.storage.estimate) {
+         try {
+           const estimate = await nav.storage.estimate();
+           const quota = estimate.quota ? (estimate.quota / (1024 * 1024 * 1024)).toFixed(1) + ' GB' : 'UNKNOWN';
+           const usage = estimate.usage ? (estimate.usage / (1024 * 1024)).toFixed(1) + ' MB' : '0 MB';
+           setStats(prev => ({ ...prev, storageQuota: quota, storageUsage: usage }));
+         } catch (e) { console.warn('Storage Estimate Failed', e); }
+       }
+    };
+    updateStorage();
+
+    // 5. Live Simulation Loop
+    const interval = setInterval(() => {
+      setStats(prev => ({
+        ...prev,
+        cpuUsage: Math.floor(Math.random() * (45 - 5) + 5),
+        memory: nav.deviceMemory ? `${nav.deviceMemory}GB` : '8GB',
+        cores: nav.hardwareConcurrency || 4,
+        userAgent: nav.userAgent,
+        platform: nav.platform || 'UNKNOWN OS',
+        online: nav.onLine,
+        connection: connection ? connection.effectiveType.toUpperCase() : 'WIFI',
+        screenRes: `${window.screen.width}x${window.screen.height}`,
+        gpu: gpuInfo
+      }));
+    }, 2000);
+
+    return () => {
+      clearInterval(interval);
+      batteryUnsub();
+    };
+  }, []);
+
+  return stats;
+};
+
+// --- COMPONENTS ---
+
+const NotificationToast = ({ message, type, show }) => {
+  if (!show) return null;
+  return (
+    <div className="fixed top-24 left-1/2 transform -translate-x-1/2 z-50 animate-fadeIn pointer-events-none">
+      <div className="bg-black/90 border border-red-500 px-6 py-3 flex items-center gap-3 shadow-[0_0_20px_rgba(220,38,38,0.5)]">
+        {type === 'mute' ? <VolumeX className="text-red-500" /> : <Volume2 className="text-cyan-400" />}
+        <span className="font-mono text-white tracking-widest">{message}</span>
+      </div>
+    </div>
+  );
+};
+
+// Factory function to create a particle class with closure over canvas/ctx/mouseRef
+const createParticleClass = (canvas, ctx, mouseRef) => {
+  return class Particle {
+    constructor(isBurst = false) {
+      this.x = 0;
+      this.y = 0;
+      this.vx = 0;
+      this.vy = 0;
+      this.size = 0;
+      this.alpha = 0;
+      this.reset(isBurst);
+    }
+
+    reset(isBurst = false) {
+      if (isBurst) {
+        this.x = canvas.width / 2;
+        this.y = canvas.height / 2;
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 15 + 5;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+      } else {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.vx = (Math.random() - 0.5) * 0.5;
+        this.vy = (Math.random() - 0.5) * 0.5;
+      }
+      this.size = Math.random() * 2 + 0.5;
+      this.alpha = Math.random() * 0.5 + 0.1;
+    }
+
+    update() {
+      this.x += this.vx;
+      this.y += this.vy;
+
+      if (mouseRef.current.active) {
+        const dx = this.x - mouseRef.current.x;
+        const dy = this.y - mouseRef.current.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const maxDist = 250;
+        if (dist < maxDist && dist > 0) {
+          const force = (maxDist - dist) / maxDist;
+          this.vx += (dx / dist) * force * 0.4;
+          this.vy += (dy / dist) * force * 0.4;
+        }
+      }
+
+      this.vx *= 0.96;
+      this.vy *= 0.96;
+
+      if (this.x < 0) this.x = canvas.width;
+      if (this.x > canvas.width) this.x = 0;
+      if (this.y < 0) this.y = canvas.height;
+      if (this.y > canvas.height) this.y = 0;
+    }
+
+    draw() {
+      ctx.fillStyle = `rgba(220, 38, 38, ${this.alpha})`;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+};
+
+// Optimized Particle Background with requestAnimationFrame for 60 FPS
+const ParticleBackground = ({ burstMode }) => {
+  const canvasRef = useRef(null);
+  const mouseRef = useRef({ x: 0, y: 0, active: false });
+  const particlesRef = useRef([]);
+  const animationFrameRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    let particles = particlesRef.current;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener('resize', resize);
+    resize();
+
+    const Particle = createParticleClass(canvas, ctx, mouseRef);
+
+    // Responsive particle count
+    const count = window.innerWidth < 768 ? 60 : 150;
+    if (particles.length === 0) {
+      for (let i = 0; i < count; i++) particles.push(new Particle());
+    }
+    particlesRef.current = particles;
+
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach(p => { p.update(); p.draw(); });
+      
+      // Draw Grid with optimized rendering
+      ctx.strokeStyle = 'rgba(255, 0, 0, 0.03)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for(let x = 0; x < canvas.width; x += 40) { ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); }
+      for(let y = 0; y < canvas.height; y += 40) { ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); }
+      ctx.stroke();
+
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    animate();
+
+    // Burst Logic
+    if (burstMode) {
+      for (let i = 0; i < 50; i++) {
+        particles.push(new Particle(true));
+      }
+      setTimeout(() => {
+        particles.splice(count);
+      }, 2000);
+    }
+
+    const moveHandler = (e) => {
+      const x = e.touches ? e.touches[0].clientX : e.clientX;
+      const y = e.touches ? e.touches[0].clientY : e.clientY;
+      mouseRef.current = { x, y, active: true };
+    };
+    const endHandler = () => mouseRef.current.active = false;
+
+    window.addEventListener('mousemove', moveHandler, { passive: true });
+    window.addEventListener('touchmove', moveHandler, { passive: true });
+    window.addEventListener('mouseup', endHandler, { passive: true });
+    window.addEventListener('touchend', endHandler, { passive: true });
+
+    return () => {
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', moveHandler);
+      window.removeEventListener('touchmove', moveHandler);
+      window.removeEventListener('mouseup', endHandler);
+      window.removeEventListener('touchend', endHandler);
+      cancelAnimationFrame(animationFrameRef.current);
+    };
+  }, [burstMode]);
+
+  return <canvas ref={canvasRef} className="fixed top-0 left-0 w-full h-full pointer-events-none z-0" />;
+};
+
+const LoadingScreen = ({ onComplete }) => {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       setProgress(prev => {
         if (prev >= 100) {
@@ -80,793 +411,572 @@ const LoadingScreen = ({ onComplete }) => {
           setTimeout(onComplete, 500);
           return 100;
         }
-        const jump = Math.random() > 0.8 ? 15 : 2;
-        if (Math.random() > 0.5) playSound('scan'); 
-        return Math.min(prev + jump, 100);
+        return prev + Math.floor(Math.random() * 8) + 2;
       });
-    }, 150);
+    }, 80);
     return () => clearInterval(interval);
-  }, [onComplete, playSound, initAudio]);
+  }, [onComplete]);
 
   return (
-    <div className="fixed inset-0 bg-[#050505] z-50 flex flex-col items-center justify-center font-mono" role="progressbar" aria-valuenow={progress} aria-valuemin="0" aria-valuemax="100">
-      <div className="w-full max-w-md px-8 relative">
-        <h1 className="text-[#00f0ff] text-2xl mb-2 tracking-widest animate-pulse font-bold text-center">
-          LOADING... <span className="text-[#00f0ff]">{Math.floor(progress)}%</span>
-        </h1>
-        
-        <div className="relative h-12 w-full flex items-center p-1 border-x-4 border-[#00f0ff] border-opacity-80">
-          <div className="absolute -top-1 -left-1 w-4 h-1 bg-[#00f0ff]"></div>
-          <div className="absolute -bottom-1 -left-1 w-4 h-1 bg-[#00f0ff]"></div>
-          <div className="absolute -top-1 -right-1 w-4 h-1 bg-[#00f0ff]"></div>
-          <div className="absolute -bottom-1 -right-1 w-4 h-1 bg-[#00f0ff]"></div>
-
-          <div className="flex h-full w-full gap-1 overflow-hidden">
-            {Array.from({ length: 40 }).map((_, i) => (
-              <div 
-                key={i}
-                className={`h-full flex-1 transition-colors duration-75 ${
-                  (i / 40) * 100 < progress ? 'bg-[#ff2a2a] shadow-[0_0_10px_#ff2a2a]' : 'bg-[#1a1a1a]'
-                }`}
-              />
-            ))}
-          </div>
+    <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center">
+      <div className="w-4/5 max-w-md relative">
+        <div className="text-center mb-4 font-mono flex justify-between items-end">
+          <span className="text-red-500 text-xs tracking-widest">SYSTEM_BOOT_SEQ</span>
+          <span className="text-cyan-400 text-xl tracking-widest font-bold">{Math.min(progress, 100)}%</span>
         </div>
-        
-        <div className="mt-4 text-xs text-[#ff2a2a] text-center opacity-70 tracking-[0.3em]">
-          INITIALIZING NEURAL LINK...
+        <div className="relative h-12 w-full flex items-center">
+          <div className="absolute left-0 top-0 bottom-0 w-4 border-l-2 border-t-2 border-b-2 border-cyan-400" />
+          <div className="absolute right-0 top-0 bottom-0 w-4 border-r-2 border-t-2 border-b-2 border-cyan-400" />
+          <div className="flex-1 mx-6 h-8 flex gap-1 overflow-hidden">
+             {Array.from({ length: 40 }).map((_, i) => (
+               <div 
+                  key={i}
+                  className={`h-full flex-1 transition-all duration-75 ${
+                    (i / 40) * 100 < progress 
+                      ? 'bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)] scale-y-100' 
+                      : 'bg-red-900/10 scale-y-50'
+                  }`}
+               />
+             ))}
+          </div>
         </div>
       </div>
     </div>
   );
 };
 
-/**
- * COMPONENT: SETTING ROW
- * Individual setting row with toggle or slider
- */
-const SettingRow = ({ label, type = "toggle", value, onChange, playSound, isFocused, onFocus, tabIndex }) => {
-  const rowRef = useRef(null);
+const CyberCheckbox = ({ label, checked, onChange }) => (
+  <div className="flex items-center justify-between py-3 group cursor-pointer hover:bg-white/5 px-2 transition-colors" onClick={() => {
+    audio.playClickSound();
+    onChange(!checked);
+  }}>
+    <div className="flex items-center gap-3">
+      <div className={`w-1 h-4 ${checked ? 'bg-red-500 shadow-[0_0_8px_red]' : 'bg-red-900/50'} transition-all`} />
+      <span className="text-red-100 font-mono tracking-widest text-sm sm:text-base group-hover:text-red-400 transition-colors">
+        {label}
+      </span>
+    </div>
+    <div className="flex gap-4">
+      <div className={`flex items-center gap-2 ${checked ? 'opacity-100' : 'opacity-30 blur-[1px]'}`}>
+        <span className="text-[10px] text-red-500 font-bold">ON</span>
+        <div className={`w-4 h-4 border border-red-500 flex items-center justify-center bg-black`}>
+          {checked && <div className="w-2 h-2 bg-red-500 shadow-[0_0_5px_red]" />}
+        </div>
+      </div>
+      <div className={`flex items-center gap-2 ${!checked ? 'opacity-100' : 'opacity-30 blur-[1px]'}`}>
+        <span className="text-[10px] text-red-500 font-bold">OFF</span>
+        <div className={`w-4 h-4 border border-red-500 flex items-center justify-center bg-black`}>
+          {!checked && <div className="w-2 h-2 bg-red-500 shadow-[0_0_5px_red]" />}
+        </div>
+      </div>
+    </div>
+  </div>
+);
 
-  useEffect(() => {
-    if (isFocused && rowRef.current) {
-      rowRef.current.focus();
-    }
-  }, [isFocused]);
-
-  const handleKeyDown = (e) => {
-    if (type === 'slider') {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        const newValue = Math.max(0, value - 5);
-        onChange(newValue);
-        playSound('click');
-      } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        const newValue = Math.min(100, value + 5);
-        onChange(newValue);
-        playSound('click');
-      }
-    } else {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        onChange(!value);
-        playSound('click');
-      }
-    }
-  };
-
-  return (
-    <div 
-      ref={rowRef}
-      className={`flex items-center justify-between py-4 border-l-2 border-[#ff2a2a] pl-4 bg-gradient-to-r from-[#ff2a2a10] to-transparent mb-4 transition-all group cursor-pointer ${isFocused ? 'bg-[#ff2a2a30] outline outline-2 outline-[#00f0ff]' : 'hover:bg-[#ff2a2a20]'}`}
-      tabIndex={tabIndex}
-      role={type === 'slider' ? 'slider' : 'switch'}
-      aria-label={label}
-      aria-valuenow={type === 'slider' ? value : undefined}
-      aria-valuemin={type === 'slider' ? 0 : undefined}
-      aria-valuemax={type === 'slider' ? 100 : undefined}
-      aria-checked={type === 'toggle' ? value : undefined}
-      onKeyDown={handleKeyDown}
-      onFocus={onFocus}
+// CyberSlider with robust event handling
+const CyberSlider = ({ label, value, onChange }) => (
+  <div className="mb-6 select-none">
+    <div className="flex justify-between items-center mb-2">
+      <span className="bg-red-500/10 px-2 py-0.5 text-xs text-red-400 border-l-2 border-red-500 font-bold tracking-wider uppercase">
+        {label}
+      </span>
+      <span className="font-mono text-cyan-400 shadow-cyan-400/50">{value}%</span>
+    </div>
+    <div className="relative h-8 w-full flex items-center cursor-pointer group touch-none" 
+      onMouseDown={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        
+        const update = (ev) => {
+          const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+          const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+          onChange(Math.round(pct));
+        };
+        
+        update(e);
+        
+        const move = (ev) => { update(ev); };
+        const up = () => { 
+          window.removeEventListener('mousemove', move);
+          window.removeEventListener('mouseup', up);
+          window.removeEventListener('touchmove', move);
+          window.removeEventListener('touchend', up);
+          audio.playClickSound();
+        };
+        
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+        window.addEventListener('touchmove', move);
+        window.addEventListener('touchend', up);
+      }}
+      onTouchStart={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const update = (ev) => {
+          const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+          const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+          onChange(Math.round(pct));
+        };
+        update(e);
+        const move = (ev) => { update(ev); };
+        const up = () => { 
+          window.removeEventListener('touchmove', move);
+          window.removeEventListener('touchend', up);
+          audio.playClickSound();
+        };
+        window.addEventListener('touchmove', move);
+        window.addEventListener('touchend', up);
+      }}
     >
-      <div className="flex items-center gap-2">
-        <div className="w-1 h-4 bg-[#ff2a2a] opacity-0 group-hover:opacity-100 transition-opacity" />
-        <span className="text-white font-mono tracking-widest text-sm md:text-base uppercase">{label}</span>
-      </div>
-      
-      {type === "slider" ? (
-        <div className="flex items-center gap-4 w-1/2 justify-end pr-4">
-          <input 
-            type="range" 
-            min="0" 
-            max="100" 
-            value={value}
-            onChange={(e) => {
-              onChange(Number(e.target.value));
-              playSound('click');
-            }}
-            className="w-full h-2 bg-[#1a1a1a] appearance-none cursor-pointer cyberpunk-slider"
-            tabIndex={-1}
-            aria-hidden="true"
-          />
-          <span className="text-[#00f0ff] font-mono w-12 text-right">{value}%</span>
-        </div>
-      ) : (
-        <div className="flex items-center gap-8 pr-4 font-mono text-xs md:text-sm">
-          <div 
-            className="flex items-center gap-2 cursor-pointer" 
-            onClick={(e) => { e.stopPropagation(); onChange(true); playSound('click'); }}
-          >
-            <span className={value ? "text-[#ff2a2a]" : "text-gray-500"}>ON</span>
-            <div className={`w-4 h-4 border border-[#ff2a2a] flex items-center justify-center transition-all ${value ? 'bg-[#ff2a2a]' : ''}`}>
-              {value && <div className="w-2 h-2 bg-black" />}
-            </div>
-          </div>
-          <div 
-            className="flex items-center gap-2 cursor-pointer" 
-            onClick={(e) => { e.stopPropagation(); onChange(false); playSound('click'); }}
-          >
-            <span className={!value ? "text-[#ff2a2a]" : "text-gray-500"}>OFF</span>
-            <div className={`w-4 h-4 border border-[#ff2a2a] flex items-center justify-center transition-all ${!value ? 'bg-[#ff2a2a]' : ''}`}>
-              {!value && <div className="w-2 h-2 bg-black" />}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-/**
- * COMPONENT: SETTINGS PANEL
- * Replicates the "Settings" reference image with keyboard navigation
- */
-const SettingsPanel = ({ active, onClose, playSound, volume, setVolume }) => {
-  const [focusIndex, setFocusIndex] = useState(0);
-  const [settings, setSettings] = useState({
-    effectsVolume: 90,
-    motionBlur: true,
-    fieldOfDepth: true,
-    deepColor: false
-  });
-  const [difficulty, setDifficulty] = useState('easy');
-  const panelRef = useRef(null);
-
-  const settingsCount = 5; // 2 sliders + 3 toggles
-  const totalFocusableItems = settingsCount + 3 + 2; // settings + difficulties + buttons
-
-  useEffect(() => {
-    if (active) {
-      setFocusIndex(0);
-    }
-  }, [active]);
-
-  useEffect(() => {
-    if (!active) return;
-
-    const handleKeyDown = (e) => {
-      switch (e.key) {
-        case 'ArrowDown':
-          e.preventDefault();
-          setFocusIndex(prev => Math.min(prev + 1, totalFocusableItems - 1));
-          playSound('hover');
-          break;
-        case 'ArrowUp':
-          e.preventDefault();
-          setFocusIndex(prev => Math.max(prev - 1, 0));
-          playSound('hover');
-          break;
-        case 'Escape':
-          e.preventDefault();
-          onClose();
-          playSound('click');
-          break;
-        default:
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [active, onClose, playSound, totalFocusableItems]);
-
-  if (!active) return null;
-
-  const handleDifficultyKeyDown = (e, diff) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      setDifficulty(diff);
-      playSound('click');
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      const diffs = ['easy', 'medium', 'hard'];
-      const currentIndex = diffs.indexOf(diff);
-      if (currentIndex > 0) {
-        setDifficulty(diffs[currentIndex - 1]);
-        setFocusIndex(settingsCount + currentIndex - 1);
-        playSound('hover');
-      }
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      const diffs = ['easy', 'medium', 'hard'];
-      const currentIndex = diffs.indexOf(diff);
-      if (currentIndex < diffs.length - 1) {
-        setDifficulty(diffs[currentIndex + 1]);
-        setFocusIndex(settingsCount + currentIndex + 1);
-        playSound('hover');
-      }
-    }
-  };
-
-  return (
-    <div 
-      className="absolute inset-0 z-40 bg-[#050505]/95 backdrop-blur-sm flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Settings Panel"
-      ref={panelRef}
-    >
-      <div className="w-full max-w-3xl border border-[#333] relative p-4 md:p-8 bg-black">
-        {/* Corner Decorations */}
-        <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-[#ff2a2a]" />
-        <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-[#ff2a2a]" />
-        <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-[#ff2a2a]" />
-        <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-[#ff2a2a]" />
-
-        {/* Title */}
-        <div className="text-center mb-12 relative">
-          <div className="absolute left-1/2 -translate-x-1/2 -top-6 md:-top-10 flex gap-2">
-            <div className="w-2 h-2 bg-[#ff2a2a] rounded-full" />
-            <div className="w-2 h-2 bg-[#ff2a2a] rounded-full" />
-          </div>
-          <h2 className="text-xl md:text-2xl font-mono text-white tracking-[0.5em] uppercase">Settings</h2>
-        </div>
-
-        {/* Content */}
-        <div className="space-y-2">
-          <SettingRow 
-            label="Music Volume" 
-            type="slider" 
-            value={volume} 
-            onChange={setVolume} 
-            playSound={playSound}
-            isFocused={focusIndex === 0}
-            onFocus={() => setFocusIndex(0)}
-            tabIndex={0}
-          />
-          <SettingRow 
-            label="Effects Volume" 
-            type="slider" 
-            value={settings.effectsVolume} 
-            onChange={(val) => setSettings(prev => ({ ...prev, effectsVolume: val }))}
-            playSound={playSound}
-            isFocused={focusIndex === 1}
-            onFocus={() => setFocusIndex(1)}
-            tabIndex={0}
-          />
-          <SettingRow 
-            label="Motion Blur" 
-            type="toggle" 
-            value={settings.motionBlur} 
-            onChange={(val) => setSettings(prev => ({ ...prev, motionBlur: val }))}
-            playSound={playSound}
-            isFocused={focusIndex === 2}
-            onFocus={() => setFocusIndex(2)}
-            tabIndex={0}
-          />
-          <SettingRow 
-            label="Field of Depth" 
-            type="toggle" 
-            value={settings.fieldOfDepth} 
-            onChange={(val) => setSettings(prev => ({ ...prev, fieldOfDepth: val }))}
-            playSound={playSound}
-            isFocused={focusIndex === 3}
-            onFocus={() => setFocusIndex(3)}
-            tabIndex={0}
-          />
-          <SettingRow 
-            label="Deep Color" 
-            type="toggle" 
-            value={settings.deepColor} 
-            onChange={(val) => setSettings(prev => ({ ...prev, deepColor: val }))}
-            playSound={playSound}
-            isFocused={focusIndex === 4}
-            onFocus={() => setFocusIndex(4)}
-            tabIndex={0}
-          />
-        </div>
-
-        {/* Difficulty Selector */}
-        <div className="mt-8 md:mt-12 mb-6 md:mb-8">
-          <div className="bg-[#ff2a2a] text-black font-bold text-center py-1 tracking-widest mb-6 text-sm md:text-base">
-            DIFFICULTY
-          </div>
-          <div className="flex justify-center gap-6 md:gap-12 font-mono text-xs md:text-sm text-[#ff2a2a]" role="radiogroup" aria-label="Difficulty level">
-            {['easy', 'medium', 'hard'].map((diff, idx) => (
-              <label 
-                key={diff}
-                className={`flex items-center gap-2 cursor-pointer transition-opacity ${difficulty === diff ? '' : 'opacity-50'} ${focusIndex === settingsCount + idx ? 'outline outline-2 outline-[#00f0ff] outline-offset-2' : ''}`}
-                tabIndex={0}
-                role="radio"
-                aria-checked={difficulty === diff}
-                onKeyDown={(e) => handleDifficultyKeyDown(e, diff)}
-                onClick={() => { setDifficulty(diff); playSound('click'); }}
-                onFocus={() => setFocusIndex(settingsCount + idx)}
-              >
-                <span className="uppercase">{diff}</span>
-                <div className={`w-4 h-4 border border-[#ff2a2a] ${difficulty === diff ? 'bg-[#ff2a2a]' : ''}`} />
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex justify-between mt-6 md:mt-8 px-4 md:px-8">
-          <button 
-            onClick={() => { playSound('click'); onClose(); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                playSound('click');
-                onClose();
-              }
-            }}
-            className={`border border-[#ff2a2a] text-white px-4 md:px-8 py-2 font-mono text-xs md:text-sm hover:bg-[#ff2a2a] hover:text-black transition-colors relative ${focusIndex === totalFocusableItems - 2 ? 'bg-[#ff2a2a] text-black outline outline-2 outline-[#00f0ff]' : ''}`}
-            tabIndex={0}
-            onFocus={() => setFocusIndex(totalFocusableItems - 2)}
-          >
-            [ BACK ]
-          </button>
-          <button 
-            onClick={() => { playSound('click'); onClose(); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                playSound('click');
-                onClose();
-              }
-            }}
-            className={`border border-[#ff2a2a] text-white px-4 md:px-8 py-2 font-mono text-xs md:text-sm hover:bg-[#ff2a2a] hover:text-black transition-colors relative ${focusIndex === totalFocusableItems - 1 ? 'bg-[#ff2a2a] text-black outline outline-2 outline-[#00f0ff]' : ''}`}
-            tabIndex={0}
-            onFocus={() => setFocusIndex(totalFocusableItems - 1)}
-          >
-            [ ACCEPT ]
-          </button>
-        </div>
+      <div className="absolute w-full h-2 bg-red-900/20 border border-red-900/50" />
+      <div className="absolute h-2 bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.6)] transition-all duration-75" style={{ width: `${value}%` }} />
+      <div 
+        className="absolute h-5 w-3 bg-black border border-red-400 group-hover:bg-red-950 transition-all z-10"
+        style={{ left: `${value}%`, transform: 'translateX(-50%)' }}
+      >
+        <div className="w-full h-[1px] bg-red-500 mt-2" />
       </div>
     </div>
-  );
-};
+  </div>
+);
 
-/**
- * COMPONENT: STAT DIAMOND
- * Renders the rotated square stats from the "Attributes" reference
- */
-const StatDiamond = ({ label, value, color = "red", delay = 0, isFocused, onFocus, tabIndex, onValueChange }) => {
-  const diamondRef = useRef(null);
-
-  useEffect(() => {
-    if (isFocused && diamondRef.current) {
-      diamondRef.current.focus();
-    }
-  }, [isFocused]);
-
-  const handleKeyDown = (e) => {
-    if (!onValueChange) return;
-    
-    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
-      e.preventDefault();
-      onValueChange(1);
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
-      e.preventDefault();
-      onValueChange(-1);
-    }
-  };
-
-  return (
-    <div 
-      ref={diamondRef}
-      className={`relative w-20 h-20 sm:w-24 sm:h-24 md:w-32 md:h-32 flex items-center justify-center m-1 sm:m-2 group cursor-pointer ${isFocused ? 'scale-110' : ''}`}
-      style={{ animation: `fadeIn 0.5s ease-out ${delay}s backwards` }}
-      tabIndex={tabIndex}
-      role="button"
-      aria-label={`${label}: ${value}`}
-      onKeyDown={handleKeyDown}
-      onFocus={onFocus}
-    >
-      {/* Rotated Container */}
-      <div className={`absolute inset-0 transform rotate-45 border-2 transition-all duration-300 group-hover:scale-110 group-hover:bg-[#ff2a2a]/20
-        ${color === 'red' ? 'border-[#ff2a2a] bg-[#ff2a2a]/10' : 'border-[#00f0ff] bg-[#00f0ff]/10'}
-        ${isFocused ? 'scale-110 border-[#00f0ff] shadow-[0_0_20px_#00f0ff]' : ''}`}>
-        
-        {/* Inner Glitch Pattern */}
-        <div className="absolute inset-2 border border-dashed border-white/20" />
-        
-        {/* Corner Accents */}
-        <div className={`absolute top-0 left-0 w-2 h-2 ${color === 'red' ? 'bg-[#ff2a2a]' : 'bg-[#00f0ff]'}`} />
-        <div className={`absolute bottom-0 right-0 w-2 h-2 ${color === 'red' ? 'bg-[#ff2a2a]' : 'bg-[#00f0ff]'}`} />
-      </div>
-
-      {/* Content (Counter-rotated to stay straight) */}
-      <div className="relative z-10 text-center pointer-events-none">
-        <div className="text-xl sm:text-2xl md:text-3xl font-bold font-mono text-white mb-1 drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">
-          {value}
-        </div>
-        <div className={`text-[8px] sm:text-[10px] md:text-xs font-mono uppercase tracking-widest ${color === 'red' ? 'text-[#ff2a2a]' : 'text-[#00f0ff]'}`}>
-          {label}
-        </div>
-      </div>
+const AttributeNode = ({ label, value, icon: IconComponent, active, onClick }) => (
+  <button 
+    onClick={() => {
+      audio.playClickSound();
+      onClick();
+    }}
+    onMouseEnter={() => audio.playHoverSound()}
+    className={`group relative flex items-center justify-center w-20 h-20 xs:w-24 xs:h-24 sm:w-28 sm:h-28 m-1 sm:m-2 transition-all duration-300 transform outline-none`}
+  >
+    <div className={`absolute inset-0 transform rotate-45 border-2 transition-all duration-300 ${
+      active 
+        ? 'bg-red-600/20 border-red-500 shadow-[0_0_25px_rgba(239,68,68,0.6)] scale-110' 
+        : 'bg-black/80 border-red-900/50 hover:border-red-500/80 hover:scale-105'
+    }`}></div>
+    <div className="relative z-10 flex flex-col items-center justify-center text-red-500">
+      <IconComponent size={20} className={`mb-1 transition-all ${active ? 'text-white drop-shadow-[0_0_5px_white]' : 'text-red-600'}`} />
+      <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase text-red-400">{label}</span>
+      <span className="text-base sm:text-lg font-mono font-bold text-white">{value}</span>
     </div>
-  );
-};
+  </button>
+);
 
-/**
- * MAIN APP COMPONENT
- */
+// --- MAIN APP ---
 const App = () => {
-  const [loading, setLoading] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
-  const [volume, setVolume] = useState(50);
-  const [focusedDiamond, setFocusedDiamond] = useState(-1);
-  const [attributes, setAttributes] = useState({
-    reflex: 10,
-    strength: 10,
-    intel: 10,
-    tech: 10,
-    const: 10,
-    cool: 10
+  const [booted, setBooted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [view, setView] = useState('home'); // 'home', 'settings', 'device'
+  const [activeAttr, setActiveAttr] = useState('reflex');
+  const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
+  const [burst, setBurst] = useState(false);
+  
+  const [settings, setSettings] = useState({
+    musicVol: 40,
+    sfxVol: 80,
+    motionBlur: false,
+    dof: false,
+    chromatic: true,
+    scanlines: true
   });
-  const [skills, setSkills] = useState({
-    handGuns: { current: 5, max: 9 },
-    rifles: { current: 5, max: 10 },
-    blades: { current: 6, max: 10 }
-  });
-  const { initAudio, playSound } = useSoundEngine(volume / 100);
 
-  // Initialize audio on first user interaction
+  const systemStats = useSystemMonitor();
+
   useEffect(() => {
-    const handleInteraction = () => initAudio();
-    window.addEventListener('click', handleInteraction);
-    window.addEventListener('touchstart', handleInteraction);
-    window.addEventListener('keydown', handleInteraction);
-    return () => {
-      window.removeEventListener('click', handleInteraction);
-      window.removeEventListener('touchstart', handleInteraction);
-      window.removeEventListener('keydown', handleInteraction);
-    };
-  }, [initAudio]);
-
-  // Global keyboard navigation
-  useEffect(() => {
-    if (loading || showSettings) return;
-
     const handleKeyDown = (e) => {
-      const attributeKeys = Object.keys(attributes);
-      const totalDiamonds = attributeKeys.length + Object.keys(skills).length;
-
-      switch (e.key) {
-        case 'ArrowRight':
-        case 'ArrowDown':
-          e.preventDefault();
-          setFocusedDiamond(prev => {
-            const next = prev + 1;
-            if (next >= totalDiamonds) return 0;
-            return next;
-          });
-          playSound('hover');
-          break;
-        case 'ArrowLeft':
-        case 'ArrowUp':
-          e.preventDefault();
-          setFocusedDiamond(prev => {
-            const next = prev - 1;
-            if (next < 0) return totalDiamonds - 1;
-            return next;
-          });
-          playSound('hover');
-          break;
-        case 'Enter':
-        case ' ':
-          if (e.target.tagName !== 'BUTTON') {
-            e.preventDefault();
-            toggleSettings();
-          }
-          break;
-        case 's':
-        case 'S':
-          e.preventDefault();
-          toggleSettings();
-          break;
-        case 'Escape':
-          if (showSettings) {
-            e.preventDefault();
-            setShowSettings(false);
-            playSound('click');
-          }
-          break;
-        default:
-          break;
+      if (e.key.toLowerCase() === 'm') {
+        const isMuted = audio.toggleMute();
+        setNotification({
+          show: true,
+          message: isMuted ? 'AUDIO MUTED' : 'AUDIO RESTORED',
+          type: isMuted ? 'mute' : 'info'
+        });
+        setTimeout(() => setNotification(n => ({...n, show: false})), 2000);
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [loading, showSettings, attributes, skills, playSound]);
+  }, []);
 
-  const toggleSettings = () => {
-    playSound('click');
-    setShowSettings(!showSettings);
+  useEffect(() => {
+    if (booted) {
+      audio.setVolumes(settings.musicVol, settings.sfxVol);
+    }
+  }, [settings.musicVol, settings.sfxVol, booted]);
+
+  const triggerBurst = () => {
+    setBurst(true);
+    setTimeout(() => setBurst(false), 200);
   };
 
-  const handleAttributeChange = (attr, delta) => {
-    setAttributes(prev => ({
-      ...prev,
-      [attr]: Math.max(1, Math.min(20, prev[attr] + delta))
-    }));
-    playSound('click');
-  };
-
-  const handleSkillChange = (skill, delta) => {
-    setSkills(prev => ({
-      ...prev,
-      [skill]: {
-        ...prev[skill],
-        current: Math.max(1, Math.min(prev[skill].max, prev[skill].current + delta))
-      }
-    }));
-    playSound('click');
-  };
-
-  const stats = [
-    { name: "CRIT CHANCE", val: `${10 + Math.floor(attributes.reflex / 2)}%` },
-    { name: "CRIT DAMAGE", val: `${100 + attributes.strength * 4}%` },
-    { name: "ARMOR", val: `${300 + attributes.const * 2}` },
-    { name: "EVASION", val: `${400 + attributes.reflex * 4}` },
-    { name: "THERMAL RES", val: `${5 + attributes.tech}%` },
-    { name: "EMP RES", val: `${attributes.intel}%` }
-  ];
-
-  if (loading) {
-    return <LoadingScreen onComplete={() => setLoading(false)} />;
+  if (!booted) {
+    return (
+      <div 
+        className="h-screen w-screen bg-black flex items-center justify-center cursor-pointer overflow-hidden relative"
+        onClick={() => {
+          audio.init();
+          audio.playClickSound();
+          setBooted(true);
+          setLoading(true);
+        }}
+      >
+        <ParticleBackground burstMode={false} />
+        <div className="z-10 border border-red-500/50 p-8 sm:p-12 bg-black/90 backdrop-blur-md text-center group hover:border-red-500 transition-colors shadow-[0_0_50px_rgba(220,38,38,0.2)] mx-4">
+          <h1 className="text-3xl sm:text-5xl font-black text-red-600 tracking-tighter mb-4 group-hover:text-red-500 transition-colors cyberpunk-heading">SYSTEM OFFLINE</h1>
+          <p className="text-cyan-400 font-mono text-xs sm:text-sm tracking-[0.3em] sm:tracking-[0.4em] animate-pulse">TAP TO INITIALIZE NEURAL LINK</p>
+        </div>
+      </div>
+    );
   }
 
-  return (
-    <div className="min-h-screen bg-[#050505] text-white overflow-x-hidden selection:bg-[#ff2a2a] selection:text-black">
-      <div className="scanlines" aria-hidden="true" />
+  if (loading) {
+    return (
+      <>
+        <ParticleBackground burstMode={false} />
+        <LoadingScreen onComplete={() => setLoading(false)} />
+      </>
+    );
+  }
 
-      {/* Navigation / Header */}
-      <nav className="fixed top-0 w-full z-30 flex justify-between items-center p-3 md:p-6 border-b border-[#333] bg-[#050505]/90 backdrop-blur" role="navigation">
-        <div className="flex items-center gap-3 md:gap-4">
-          <div className="w-8 h-8 md:w-10 md:h-10 border-2 border-[#ff2a2a] rounded-sm flex items-center justify-center animate-pulse">
-            <Cpu className="text-[#ff2a2a]" size={20} />
+  const frostClass = settings.motionBlur ? "backdrop-blur-sm bg-black/60" : "bg-black/80";
+  const glowClass = settings.motionBlur ? "text-shadow-glow" : "";
+
+  return (
+    <div className="min-h-screen bg-black text-red-500 font-sans selection:bg-red-500 selection:text-black overflow-hidden relative transition-all duration-300">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap');
+        body { font-family: 'Share Tech Mono', monospace; }
+        h1, h2, h3, .heading, .cyberpunk-heading { font-family: 'Orbitron', sans-serif; }
+        
+        .chromatic-text {
+          text-shadow: ${settings.chromatic ? '2px 0 rgba(255,0,0,0.7), -2px 0 rgba(0,255,255,0.7)' : 'none'};
+        }
+        
+        .text-shadow-glow {
+          text-shadow: 0 0 5px rgba(220, 38, 38, 0.8), 0 0 10px rgba(220, 38, 38, 0.4);
+        }
+
+        .scanline-overlay {
+          background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2));
+          background-size: 100% 4px;
+          pointer-events: none;
+        }
+
+        .dof-vignette {
+          background: radial-gradient(circle, transparent 60%, rgba(0,0,0,0.8) 120%);
+          backdrop-filter: ${settings.dof ? 'blur(2px)' : 'none'};
+          mask-image: radial-gradient(circle, transparent 50%, black 100%);
+          -webkit-mask-image: radial-gradient(circle, transparent 50%, black 100%);
+        }
+        
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .animate-fadeIn {
+          animation: fadeIn 0.3s ease-out;
+        }
+
+        /* Responsive aspect ratio optimization for 16:9 and 20:9 */
+        @media (min-aspect-ratio: 16/9) {
+          .main-content {
+            max-width: 90vw;
+            margin: 0 auto;
+          }
+        }
+        
+        @media (min-aspect-ratio: 20/9) {
+          .main-content {
+            max-width: 85vw;
+            margin: 0 auto;
+          }
+        }
+        
+        /* Mobile landscape optimization */
+        @media (max-height: 500px) and (orientation: landscape) {
+          .nav-bar {
+            height: 60px !important;
+          }
+          .main-content {
+            padding-top: 70px !important;
+            padding-bottom: 70px !important;
+          }
+        }
+      `}</style>
+      
+      <ParticleBackground burstMode={burst} />
+      {settings.scanlines && <div className="fixed inset-0 z-50 scanline-overlay opacity-30 pointer-events-none" />}
+      
+      <div className={`fixed inset-0 z-40 pointer-events-none transition-all duration-700 ${settings.dof ? 'backdrop-blur-[1px]' : ''}`} style={{ maskImage: 'radial-gradient(circle, rgba(0,0,0,0) 60%, rgba(0,0,0,1) 100%)' }} />
+      
+      <NotificationToast {...notification} />
+
+      {/* Header with REAL Stats */}
+      <header className="fixed top-0 w-full z-30 p-2 sm:p-4 px-3 sm:px-6 flex justify-between items-start bg-gradient-to-b from-black via-black/90 to-transparent">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 ${systemStats.online ? 'bg-green-500' : 'bg-red-500'} animate-ping`} />
+            <span className={`text-[10px] sm:text-xs tracking-[0.2em] text-red-400/80 ${glowClass}`}>NET: {systemStats.connection}</span>
           </div>
-          <div>
-            <h1 className="text-lg md:text-xl font-bold tracking-widest text-white">NEURAL_OS</h1>
-            <div className="text-[8px] md:text-[10px] text-[#00f0ff]">SYS.VER.2.4.9</div>
+          <span className="text-[8px] sm:text-[10px] text-red-800 font-mono hidden sm:block">{systemStats.platform} // {systemStats.userAgent.substring(0, 15)}...</span>
+        </div>
+        <div className="text-right">
+          <div className={`font-mono text-cyan-400 text-xs sm:text-sm tracking-wider flex items-center justify-end gap-2 sm:gap-4 ${glowClass}`}>
+             <span className="flex items-center gap-1"><Cpu size={12}/> {systemStats.cpuUsage}%</span>
+             <span className="flex items-center gap-1"><Terminal size={12}/> {systemStats.memory}</span>
+          </div>
+          <div className="text-[8px] sm:text-[10px] text-red-600 mt-1">
+            {systemStats.batteryLevel !== null ? (
+              <span className="flex items-center justify-end gap-1">
+                PWR: {systemStats.batteryLevel}% {systemStats.batteryCharging ? '(CHRG)' : ''}
+              </span>
+            ) : 'PWR: EXTERNAL'}
           </div>
         </div>
-        
-        <button 
-          onClick={toggleSettings}
-          className="p-2 hover:bg-[#ff2a2a]/20 border border-transparent hover:border-[#ff2a2a] transition-all group focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00f0ff]"
-          aria-label="Open Settings (Press S)"
-          title="Open Settings (Press S)"
-        >
-          <Settings className="text-white group-hover:rotate-90 transition-transform duration-500" size={24} />
-        </button>
-      </nav>
+      </header>
 
       {/* Main Content */}
-      <main className="pt-20 md:pt-24 pb-16 md:pb-12 px-3 md:px-4 max-w-7xl mx-auto relative z-10" role="main">
+      <main className="main-content relative z-20 pt-16 sm:pt-24 pb-24 sm:pb-32 px-2 sm:px-4 min-h-screen overflow-y-auto overflow-x-hidden">
         
-        {/* Background Grid Decoration */}
-        <div className="fixed inset-0 z-0 opacity-10 pointer-events-none" 
-             style={{ 
-               backgroundImage: 'radial-gradient(circle, #333 1px, transparent 1px)', 
-               backgroundSize: '30px 30px' 
-             }} 
-             aria-hidden="true"
-        />
-
-        {/* Keyboard Navigation Hint */}
-        <div className="text-center mb-4 text-[10px] md:text-xs text-gray-500 font-mono">
-          <span className="hidden md:inline">Use Arrow Keys to navigate • Enter/Space to interact • S for Settings</span>
-          <span className="md:hidden">Tap elements to interact • Swipe to scroll</span>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 relative z-10">
-          
-          {/* LEFT COLUMN: Attributes */}
-          <section className="lg:col-span-7 space-y-6 md:space-y-8" aria-labelledby="attributes-heading">
-            <div className="flex items-center gap-3 md:gap-4 mb-6 md:mb-8 border-b border-[#333] pb-4">
-              <Activity className="text-[#ff2a2a]" size={20} />
-              <h2 id="attributes-heading" className="text-xl md:text-2xl font-bold tracking-[0.2em] text-[#ff2a2a] glow-text">ATTRIBUTES</h2>
-              <span className="text-[10px] md:text-xs border border-[#ff2a2a] px-2 py-1 ml-auto whitespace-nowrap">
-                {Object.values(attributes).reduce((a, b) => a + b, 0)} PTS
-              </span>
-            </div>
-
-            {/* Diamond Grid Layout */}
-            <div className="relative py-4 md:py-8 pl-2 md:pl-12">
-               {/* Connecting Lines (SVG) */}
-               <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-30 z-0" aria-hidden="true">
-                  <path d="M100 100 L200 200 L300 100" stroke="#ff2a2a" strokeWidth="1" fill="none" />
-                  <path d="M200 200 L200 350" stroke="#ff2a2a" strokeWidth="1" fill="none" />
-                  <circle cx="200" cy="200" r="3" fill="#ff2a2a" />
-               </svg>
-
-               <div className="flex flex-wrap justify-center md:justify-start gap-2 md:gap-8">
-                  <div className="flex flex-col gap-2 md:gap-4">
-                     <StatDiamond 
-                       label="Reflex" 
-                       value={attributes.reflex} 
-                       delay={0.1}
-                       isFocused={focusedDiamond === 0}
-                       onFocus={() => setFocusedDiamond(0)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleAttributeChange('reflex', delta)}
-                     />
-                     <StatDiamond 
-                       label="Strength" 
-                       value={attributes.strength} 
-                       delay={0.2}
-                       isFocused={focusedDiamond === 1}
-                       onFocus={() => setFocusedDiamond(1)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleAttributeChange('strength', delta)}
-                     />
-                  </div>
-                  <div className="flex flex-col gap-2 md:gap-4 mt-8 md:mt-16">
-                     <StatDiamond 
-                       label="Intel" 
-                       value={attributes.intel} 
-                       delay={0.3}
-                       isFocused={focusedDiamond === 2}
-                       onFocus={() => setFocusedDiamond(2)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleAttributeChange('intel', delta)}
-                     />
-                     <StatDiamond 
-                       label="Tech" 
-                       value={attributes.tech} 
-                       delay={0.4}
-                       isFocused={focusedDiamond === 3}
-                       onFocus={() => setFocusedDiamond(3)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleAttributeChange('tech', delta)}
-                     />
-                  </div>
-                  <div className="flex flex-col gap-2 md:gap-4">
-                     <StatDiamond 
-                       label="Const" 
-                       value={attributes.const} 
-                       delay={0.5}
-                       isFocused={focusedDiamond === 4}
-                       onFocus={() => setFocusedDiamond(4)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleAttributeChange('const', delta)}
-                     />
-                     <StatDiamond 
-                       label="Cool" 
-                       value={attributes.cool} 
-                       delay={0.6}
-                       isFocused={focusedDiamond === 5}
-                       onFocus={() => setFocusedDiamond(5)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleAttributeChange('cool', delta)}
-                     />
-                  </div>
+        {view === 'home' && (
+          <div className="animate-fadeIn max-w-6xl mx-auto">
+             <div className="mb-6 sm:mb-10 pl-3 sm:pl-6 border-l-4 border-red-600 flex justify-between items-end">
+               <div>
+                 <h2 className={`text-2xl sm:text-4xl font-black text-white tracking-widest uppercase mb-1 ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>Attributes</h2>
+                 <p className="text-red-400/60 text-xs sm:text-sm tracking-wider">NEURAL LINK STATUS: STABLE</p>
                </div>
-            </div>
-
-            {/* Description Box */}
-            <div className="border-l-4 border-[#ff2a2a] bg-[#ff2a2a]/5 p-4 md:p-6 mt-6 md:mt-8 relative overflow-hidden">
-               <div className="absolute top-0 right-0 p-1" aria-hidden="true">
-                 <div className="w-2 h-2 bg-[#ff2a2a]"></div>
+               <div className="hidden sm:block text-right">
+                 <div className="text-4xl font-mono text-red-600 font-bold">LVL 50</div>
+                 <div className="text-[10px] text-red-400">MAX REPUTATION</div>
                </div>
-               <h3 className="text-[#ff2a2a] font-bold mb-2 tracking-wider text-sm md:text-base">STRENGTH</h3>
-               <p className="text-xs md:text-sm text-gray-400 leading-relaxed">
-                 How well you work with hardware. Unlocks technical ability interactions in environment. Increases jury rig possibilities.
-               </p>
-               <div className="mt-3 md:mt-4 flex gap-2 flex-wrap">
-                 <span className="bg-[#ff2a2a] text-black text-[10px] md:text-xs font-bold px-2 py-1">LEVEL {attributes.strength}</span>
-                 {attributes.strength >= 20 && <span className="border border-[#ff2a2a] text-[#ff2a2a] text-[10px] md:text-xs font-bold px-2 py-1">MAXED</span>}
-               </div>
-            </div>
-          </section>
+             </div>
 
-          {/* RIGHT COLUMN: Statistics/Skills Tree */}
-          <section className="lg:col-span-5 space-y-6 md:space-y-8" aria-labelledby="statistics-heading">
-            <div className="flex items-center gap-3 md:gap-4 mb-6 md:mb-8 border-b border-[#333] pb-4">
-              <Shield className="text-[#ff2a2a]" size={20} />
-              <h2 id="statistics-heading" className="text-xl md:text-2xl font-bold tracking-[0.2em] text-[#ff2a2a] glow-text">STATISTICS</h2>
-              <span className="text-[10px] md:text-xs text-gray-500 ml-auto">V.0.91</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 md:gap-6">
-               {/* Smaller Skill Diamonds */}
-               <div className="col-span-2 md:col-span-1 flex flex-col items-center gap-4 md:gap-6">
-                  <div className="w-full flex justify-end">
-                     <StatDiamond 
-                       label="Hand Guns" 
-                       value={`${skills.handGuns.current}/${skills.handGuns.max}`} 
-                       color="red" 
-                       delay={0.7}
-                       isFocused={focusedDiamond === 6}
-                       onFocus={() => setFocusedDiamond(6)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleSkillChange('handGuns', delta)}
-                     />
-                  </div>
-                  <div className="w-full flex justify-center">
-                     <StatDiamond 
-                       label="Rifles" 
-                       value={`${skills.rifles.current}/${skills.rifles.max}`} 
-                       color="red" 
-                       delay={0.8}
-                       isFocused={focusedDiamond === 7}
-                       onFocus={() => setFocusedDiamond(7)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleSkillChange('rifles', delta)}
-                     />
-                  </div>
-                  <div className="w-full flex justify-start">
-                     <StatDiamond 
-                       label="Blades" 
-                       value={`${skills.blades.current}/${skills.blades.max}`} 
-                       color="red" 
-                       delay={0.9}
-                       isFocused={focusedDiamond === 8}
-                       onFocus={() => setFocusedDiamond(8)}
-                       tabIndex={0}
-                       onValueChange={(delta) => handleSkillChange('blades', delta)}
-                     />
-                  </div>
+             <div className="flex flex-col lg:flex-row gap-6 lg:gap-12 items-center justify-center">
+               <div className="relative p-4 sm:p-10">
+                 <div className="absolute inset-0 bg-red-900/5 rotate-45 transform scale-75 blur-3xl rounded-full"></div>
+                 <div className="grid grid-cols-3 sm:grid-cols-3 gap-1 sm:gap-6 transform sm:-rotate-45 sm:scale-90 origin-center relative z-10">
+                    <div className="transform sm:rotate-45"><AttributeNode icon={Zap} label="Reflex" value="20" active={activeAttr === 'reflex'} onClick={() => setActiveAttr('reflex')} /></div>
+                    <div className="transform sm:rotate-45"><AttributeNode icon={Cpu} label="Intel" value="18" active={activeAttr === 'intel'} onClick={() => setActiveAttr('intel')} /></div>
+                    <div className="transform sm:rotate-45"><AttributeNode icon={Shield} label="Body" value="15" active={activeAttr === 'body'} onClick={() => setActiveAttr('body')} /></div>
+                    <div className="transform sm:rotate-45 col-start-1 sm:col-start-auto"><AttributeNode icon={Wifi} label="Tech" value="20" active={activeAttr === 'tech'} onClick={() => setActiveAttr('tech')} /></div>
+                    <div className="transform sm:rotate-45"><AttributeNode icon={Crosshair} label="Cool" value="12" active={activeAttr === 'cool'} onClick={() => setActiveAttr('cool')} /></div>
+                 </div>
                </div>
 
-               {/* Right Side Stats List */}
-               <div className="space-y-3 md:space-y-4 font-mono text-xs md:text-sm pt-2 md:pt-4">
-                 {stats.map((stat, idx) => (
-                   <div 
-                     key={idx} 
-                     className="flex justify-between items-center border-b border-[#333] pb-1 hover:border-[#ff2a2a] transition-colors group cursor-crosshair" 
-                     onMouseEnter={() => playSound('hover')}
-                     tabIndex={0}
-                     role="listitem"
-                   >
-                     <span className="text-gray-500 group-hover:text-white transition-colors">{stat.name}</span>
-                     <span className="text-[#00f0ff] font-bold">{stat.val}</span>
+               <div className={`w-full max-w-md border border-red-900/30 p-4 sm:p-8 relative group hover:border-red-500/50 transition-all duration-300 ${frostClass}`}>
+                 <div className="absolute top-0 right-0 w-16 h-16 border-t border-r border-red-500/30"></div>
+                 <div className="absolute bottom-0 left-0 w-16 h-16 border-b border-l border-red-500/30"></div>
+                 
+                 <div className="absolute top-0 right-0 p-2 sm:p-3 text-[8px] sm:text-[10px] text-red-600 font-bold border-b border-l border-red-900/30 bg-red-950/20">
+                   ID: {activeAttr.toUpperCase()}_KERNEL
+                 </div>
+
+                 <h3 className={`text-xl sm:text-3xl text-cyan-400 mb-4 sm:mb-6 heading uppercase border-b-2 border-red-900/50 pb-4 ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>
+                   {activeAttr} NODE
+                 </h3>
+                 
+                 <div className="space-y-4 sm:space-y-6 font-mono text-xs sm:text-sm text-red-300/80">
+                   <p className="leading-relaxed">
+                     Hardware interface protocol for the {activeAttr} subsystem. Enhances signal propagation speed and neural plasticity.
+                   </p>
+                   
+                   <div className="grid grid-cols-2 gap-2 sm:gap-4">
+                      <div className="bg-red-950/10 p-2 sm:p-3 border border-red-900/50 hover:bg-red-900/20 transition-colors">
+                        <div className="text-[8px] sm:text-[10px] uppercase text-red-500 mb-1">Current Output</div>
+                        <div className="text-xl sm:text-2xl text-white font-bold">98.4%</div>
+                      </div>
+                      <div className="bg-red-950/10 p-2 sm:p-3 border border-red-900/50 hover:bg-red-900/20 transition-colors">
+                        <div className="text-[8px] sm:text-[10px] uppercase text-red-500 mb-1">Next Threshold</div>
+                        <div className="text-xl sm:text-2xl text-cyan-400 font-bold animate-pulse">2050 XP</div>
+                      </div>
                    </div>
-                 ))}
-               </div>
-            </div>
-          </section>
-        </div>
 
+                   <button 
+                    onClick={() => audio.playClickSound()}
+                    className="w-full bg-red-600 hover:bg-red-500 text-black font-black text-base sm:text-lg py-3 sm:py-4 uppercase tracking-[0.2em] hover:shadow-[0_0_30px_rgba(220,38,38,0.8)] transition-all active:scale-95"
+                    style={{ clipPath: 'polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)' }}
+                   >
+                     Inject Code
+                   </button>
+                 </div>
+               </div>
+             </div>
+          </div>
+        )}
+
+        {view === 'device' && (
+          <div className="animate-fadeIn max-w-4xl mx-auto pt-4">
+             <div className={`border-2 border-red-600/50 p-4 sm:p-6 relative ${frostClass}`}>
+               <div className="absolute top-0 left-0 bg-red-600 text-black font-bold px-3 sm:px-4 py-1 text-xs sm:text-sm tracking-widest">DEVICE_INTEL</div>
+               
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 mt-8">
+                  {/* Left Column: Visual Representation */}
+                  <div className="flex flex-col items-center justify-center p-4 sm:p-8 bg-black/40 border border-red-900/30">
+                     <Smartphone size={80} className="text-red-600 animate-pulse drop-shadow-[0_0_15px_rgba(220,38,38,0.5)] sm:w-[120px] sm:h-[120px]" />
+                     <div className="mt-4 sm:mt-6 text-center">
+                       <h3 className="text-lg sm:text-2xl text-white font-bold tracking-widest">{systemStats.platform}</h3>
+                       <p className="text-red-400 text-[10px] sm:text-xs mt-1 break-all">{systemStats.userAgent.substring(0, 50)}...</p>
+                     </div>
+                  </div>
+
+                  {/* Right Column: Data Grid */}
+                  <div className="grid grid-cols-1 gap-3 sm:gap-4">
+                    
+                    <div className="bg-red-950/10 p-3 sm:p-4 border-l-4 border-cyan-400">
+                      <div className="flex items-center gap-2 sm:gap-3 mb-2">
+                         <Database className="text-cyan-400" size={16}/>
+                         <span className="text-xs sm:text-sm font-bold text-cyan-100 uppercase">Storage Subsystem</span>
+                      </div>
+                      <div className="flex justify-between items-end">
+                         <span className="text-[10px] sm:text-xs text-red-400">USED: {systemStats.storageUsage}</span>
+                         <span className="text-lg sm:text-xl font-mono text-white">{systemStats.storageQuota} TOTAL</span>
+                      </div>
+                      <div className="w-full h-1 bg-red-900/30 mt-2">
+                        <div className="h-full bg-cyan-400" style={{width: '25%'}}></div>
+                      </div>
+                    </div>
+
+                    <div className="bg-red-950/10 p-3 sm:p-4 border-l-4 border-red-500">
+                      <div className="flex items-center gap-2 sm:gap-3 mb-2">
+                         <Maximize className="text-red-500" size={16}/>
+                         <span className="text-xs sm:text-sm font-bold text-red-100 uppercase">Display Matrix</span>
+                      </div>
+                      <div className="text-lg sm:text-xl font-mono text-white">{systemStats.screenRes}</div>
+                      <div className="text-[10px] sm:text-xs text-red-400 mt-1 break-all">{systemStats.gpu.substring(0, 40)}</div>
+                    </div>
+
+                    <div className="bg-red-950/10 p-3 sm:p-4 border-l-4 border-green-500">
+                      <div className="flex items-center gap-2 sm:gap-3 mb-2">
+                         {systemStats.batteryCharging ? <BatteryCharging className="text-green-500" size={16}/> : <Battery className="text-green-500" size={16}/>}
+                         <span className="text-xs sm:text-sm font-bold text-green-100 uppercase">Power Core</span>
+                      </div>
+                      <div className="flex justify-between items-end">
+                         <span className="text-lg sm:text-xl font-mono text-white">{systemStats.batteryLevel ? `${systemStats.batteryLevel}%` : 'EXT'}</span>
+                         <span className="text-[10px] sm:text-xs text-green-400">{systemStats.batteryCharging ? 'CHARGING' : 'DISCHARGING'}</span>
+                      </div>
+                    </div>
+
+                  </div>
+               </div>
+
+               <button 
+                  onClick={() => { audio.playClickSound(); setView('home'); }}
+                  className="mt-6 sm:mt-8 w-full border border-red-600 text-red-500 hover:bg-red-600 hover:text-black py-2 sm:py-3 uppercase tracking-widest font-bold transition-all text-sm"
+               >
+                 Close Diagnostics
+               </button>
+             </div>
+          </div>
+        )}
+
+        {view === 'settings' && (
+          <div className="animate-fadeIn max-w-3xl mx-auto pt-4 sm:pt-8">
+            <div className={`border border-red-600/30 p-1 relative shadow-[0_0_100px_rgba(220,38,38,0.1)] ${frostClass}`}>
+              <div className="absolute top-1/2 -left-4 w-1 h-32 bg-red-900/50 transform -translate-y-1/2 hidden sm:block"></div>
+              <div className="absolute top-1/2 -right-4 w-1 h-32 bg-red-900/50 transform -translate-y-1/2 hidden sm:block"></div>
+
+              <div className="border border-red-900/50 p-4 sm:p-8 lg:p-12 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-red-500"></div>
+                <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-red-500"></div>
+                <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-red-500"></div>
+                <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-red-500"></div>
+
+                <div className="flex items-center justify-between mb-8 sm:mb-12 border-b border-red-900/50 pb-4">
+                  <h2 className={`text-xl sm:text-3xl tracking-[0.1em] sm:tracking-[0.2em] text-red-100 heading ${settings.chromatic ? 'chromatic-text' : ''} ${glowClass}`}>SYSTEM_CONFIG</h2>
+                  <div className="flex gap-2">
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse delay-75"></div>
+                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse delay-150"></div>
+                  </div>
+                </div>
+
+                <div className="space-y-6 sm:space-y-10">
+                  <div className="space-y-2">
+                     <div className="flex items-center gap-2 mb-4">
+                       <Volume2 className="text-red-500" size={16} />
+                       <span className="text-xs sm:text-sm font-bold text-red-500 uppercase tracking-widest">Audio Output</span>
+                     </div>
+                     <CyberSlider 
+                        label="Music Volume" 
+                        value={settings.musicVol} 
+                        onChange={(val) => setSettings(s => ({...s, musicVol: val}))} 
+                     />
+                     <CyberSlider 
+                        label="Effects Volume" 
+                        value={settings.sfxVol} 
+                        onChange={(val) => setSettings(s => ({...s, sfxVol: val}))} 
+                     />
+                  </div>
+                  
+                  <div className="h-px bg-gradient-to-r from-transparent via-red-900/50 to-transparent my-8"></div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 mb-4">
+                       <Monitor className="text-red-500" size={16} />
+                       <span className="text-xs sm:text-sm font-bold text-red-500 uppercase tracking-widest">Graphics Engine</span>
+                     </div>
+                    <CyberCheckbox label="MOTION BLUR" checked={settings.motionBlur} onChange={(v) => setSettings(s => ({...s, motionBlur: v}))} />
+                    <CyberCheckbox label="DEPTH OF FIELD" checked={settings.dof} onChange={(v) => setSettings(s => ({...s, dof: v}))} />
+                    <CyberCheckbox label="CHROMATIC ABERRATION" checked={settings.chromatic} onChange={(v) => setSettings(s => ({...s, chromatic: v}))} />
+                    <CyberCheckbox label="SCANLINE OVERLAY" checked={settings.scanlines} onChange={(v) => setSettings(s => ({...s, scanlines: v}))} />
+                  </div>
+                </div>
+                
+                <div className="mt-6 sm:mt-8 text-center">
+                  <p className="text-[9px] sm:text-[10px] text-red-800 font-mono mb-4">PRESS 'M' TO TOGGLE AUDIO MUTE</p>
+                </div>
+
+                <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row justify-between gap-3 sm:gap-6">
+                  <button onClick={() => { audio.playClickSound(); setView('home'); }} className="flex-1 border border-red-600 text-red-500 py-2 sm:py-3 hover:bg-red-600 hover:text-black transition-colors uppercase tracking-widest text-xs sm:text-sm font-bold">
+                    Discard
+                  </button>
+                  <button onClick={() => { audio.playClickSound(); setView('home'); }} className="flex-1 bg-red-600 text-black font-bold py-2 sm:py-3 hover:bg-white hover:text-black transition-colors uppercase tracking-widest text-xs sm:text-sm shadow-[0_0_20px_rgba(220,38,38,0.5)]">
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
-      {/* Footer / Status Bar */}
-      <footer className="fixed bottom-0 w-full bg-[#050505] border-t border-[#333] p-2 flex justify-between items-center z-30 text-[8px] md:text-xs text-gray-500 font-mono">
-         <div className="flex gap-2 md:gap-4">
-           <span className="flex items-center gap-1 md:gap-2"><div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-green-500 rounded-full animate-pulse" aria-hidden="true"/> ONLINE</span>
-           <span className="hidden sm:inline">LAT: 35.021</span>
-           <span className="hidden sm:inline">LON: 139.12</span>
-         </div>
-         <div className="flex gap-2 md:gap-4">
-           <span>MEM: 64%</span>
-           <span>CPU: 12%</span>
-         </div>
-      </footer>
+      {/* Navigation Bar */}
+      <nav className="nav-bar fixed bottom-0 w-full z-40 bg-black/90 border-t border-red-900/50 backdrop-blur-lg pb-safe">
+         <div className="flex justify-around items-center h-16 sm:h-20 max-w-lg mx-auto relative">
+            <button 
+              onClick={() => { audio.playClickSound(); setView('home'); }} 
+              className={`flex flex-col items-center gap-1 w-16 sm:w-20 ${view === 'home' ? 'text-red-500 drop-shadow-[0_0_8px_red]' : 'text-red-900 hover:text-red-400'}`}
+            >
+              <Activity size={20} />
+              <span className={`text-[8px] sm:text-[10px] uppercase tracking-widest font-bold ${glowClass}`}>Stats</span>
+              {view === 'home' && <div className="w-1 h-1 bg-red-500 rounded-full mt-1"></div>}
+            </button>
+            
+            {/* Center Decorative Button - Triggers Device View */}
+            <div className="relative -top-6 sm:-top-8 group">
+              <button 
+                onClick={() => {
+                  audio.playClickSound();
+                  triggerBurst();
+                  setView('device');
+                }}
+                className="w-16 h-16 sm:w-20 sm:h-20 bg-black rotate-45 border-2 border-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.3)] group-hover:scale-110 group-hover:border-red-400 group-hover:shadow-[0_0_50px_rgba(220,38,38,0.6)] transition-all duration-300"
+              >
+                <div className="-rotate-45 bg-red-600 p-2 sm:p-3 shadow-inner">
+                  <Crosshair className="text-black" size={24} />
+                </div>
+              </button>
+            </div>
 
-      {/* Settings Overlay */}
-      <SettingsPanel 
-        active={showSettings} 
-        onClose={() => setShowSettings(false)} 
-        playSound={playSound}
-        volume={volume}
-        setVolume={setVolume}
-      />
+            <button 
+              onClick={() => { audio.playClickSound(); setView('settings'); }} 
+              className={`flex flex-col items-center gap-1 w-16 sm:w-20 ${view === 'settings' ? 'text-red-500 drop-shadow-[0_0_8px_red]' : 'text-red-900 hover:text-red-400'}`}
+            >
+              <Menu size={20} />
+              <span className={`text-[8px] sm:text-[10px] uppercase tracking-widest font-bold ${glowClass}`}>Config</span>
+              {view === 'settings' && <div className="w-1 h-1 bg-red-500 rounded-full mt-1"></div>}
+            </button>
+         </div>
+      </nav>
 
     </div>
   );
