@@ -642,10 +642,6 @@ const App = () => {
   return (
     <div className="min-h-screen bg-black text-red-500 font-sans selection:bg-red-500 selection:text-black overflow-hidden relative transition-all duration-300">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap');
-        body { font-family: 'Share Tech Mono', monospace; }
-        h1, h2, h3, .heading, .cyberpunk-heading { font-family: 'Orbitron', sans-serif; }
-        
         .chromatic-text {
           text-shadow: ${settings.chromatic ? '2px 0 rgba(255,0,0,0.7), -2px 0 rgba(0,255,255,0.7)' : 'none'};
         }
