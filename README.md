@@ -33,6 +33,16 @@ A futuristic Cyberpunk-themed Settings UI built with React and Tailwind CSS. Fea
 - GPU detection
 - Storage quota information
 
+## Screenshots
+
+### Desktop View
+![Desktop View - Attributes](https://github.com/user-attachments/assets/5dfc8ccf-b0d8-4d2a-97be-86ab36e383c2)
+
+### Mobile View
+| Stats Screen | Config Screen |
+|:---:|:---:|
+| ![Mobile Stats](https://github.com/user-attachments/assets/da70f110-0b35-40a9-8bc6-9aa158180a42) | ![Mobile Config](https://github.com/user-attachments/assets/606edcbc-a81c-4be0-92c3-acc972830c80) |
+
 ## Quick Start
 
 ### Prerequisites
